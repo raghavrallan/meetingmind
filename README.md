@@ -274,4 +274,4 @@ See [`.env.example`](.env.example) for the full list. The critical ones:
 
 MIT
 
-<!-- activity: 2026-01-12T12:03:20 -->
+<!-- activity: 2026-01-27T20:54:16 -->
