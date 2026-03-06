@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+pydantic-settings
+cryptography
+anthropic
+openai
+pgvector
+numpy
+PyJWT

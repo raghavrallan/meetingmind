@@ -1,0 +1,142 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  color-scheme: dark;
+
+  /* Backgrounds */
+  --bg-base: #0A0A0A;
+  --bg-surface: #111111;
+  --bg-raised: #161616;
+  --bg-overlay: #1A1A1A;
+
+  /* Text */
+  --fg-primary: #E8E8E8;
+  --fg-secondary: #888888;
+  --fg-tertiary: #555555;
+  --fg-muted: #333333;
+
+  /* Borders */
+  --border-subtle: rgba(255,255,255,0.06);
+  --border-default: rgba(255,255,255,0.10);
+  --border-focus: rgba(255,255,255,0.25);
+
+  /* Recording accent — the only color */
+  --rec-red: #EF4444;
+
+  /* Typography */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', monospace;
+
+  /* Spacing scale (4px base) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-base);
+  color: var(--fg-primary);
+  -webkit-app-region: no-drag;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Focus ring */
+*:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.20);
+  outline-offset: 1px;
+}
+
+/* Titlebar drag region */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.titlebar-drag button,
+.titlebar-drag input,
+.titlebar-drag select,
+.titlebar-drag a {
+  -webkit-app-region: no-drag;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Fix select dropdowns in dark theme */
+select option {
+  background: var(--bg-raised);
+  color: #999999;
+  padding: 6px 8px;
+}
+
+/* Glow effects */
+@keyframes glow-white {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 255, 255, 0.06), 0 0 30px rgba(255, 255, 255, 0.02); }
+  50% { box-shadow: 0 0 16px rgba(255, 255, 255, 0.12), 0 0 40px rgba(255, 255, 255, 0.04); }
+}
+.glow-white {
+  animation: glow-white 3s ease-in-out infinite;
+}
+
+@keyframes glow-red {
+  0%, 100% { box-shadow: 0 0 10px rgba(239, 68, 68, 0.15), 0 0 30px rgba(239, 68, 68, 0.06); }
+  50% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.28), 0 0 50px rgba(239, 68, 68, 0.10); }
+}
+.glow-recording {
+  animation: glow-red 1.5s ease-in-out infinite;
+}
+
+/* Utility: consistent input styling */
+.input-base {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.70);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.input-base:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+.input-base:focus {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.05);
+}
+.input-base::placeholder {
+  color: rgba(255, 255, 255, 0.15);
+}
+.input-base:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}

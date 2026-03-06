@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+pydantic-settings
+python-jose[cryptography]
+cryptography
+websockets
+httpx
+minio
+redis
+celery
+pgvector
+PyJWT

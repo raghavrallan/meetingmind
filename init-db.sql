@@ -1,0 +1,7 @@
+-- This script runs inside the POSTGRES_DB (ai_notetaker) on first init.
+
+-- Enable pgvector extension
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Enable full-text search
+CREATE EXTENSION IF NOT EXISTS pg_trgm;

@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.cursor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+
+# MinIO data
+minio_data/
+
+# Electron
+electron/out/
+electron/dist/
+
+# Lock files
+package-lock.json
+pnpm-lock.yaml
+
+# Screenshots and debug scripts
+*.png
+electron/*.ps1
+electron/*.js
+!electron/src/**/*.js
+
+# TypeScript build info
+*.tsbuildinfo
+next-env.d.ts
+
+# Testing
+coverage/
+.coverage
+htmlcov/
+.pytest_cache/
