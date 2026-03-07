@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Boolean, DateTime, Text
+from sqlalchemy import String, Boolean, DateTime, Text, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,12 +18,23 @@ class User(Base):
     timezone: Mapped[str] = mapped_column(String(50), default="UTC")
     preferred_language: Mapped[str] = mapped_column(String(10), default="en")
 
+    # Email/password auth
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # OAuth
-    auth_provider: Mapped[str] = mapped_column(String(20), nullable=False)  # google | microsoft
-    provider_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    auth_provider: Mapped[str] = mapped_column(String(20), nullable=False, default="email")
+    provider_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Credits
+    credit_balance: Mapped[int] = mapped_column(Integer, default=1000)
+    lifetime_credits: Mapped[int] = mapped_column(Integer, default=1000)
+
+    # Admin
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(

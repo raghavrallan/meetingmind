@@ -1,32 +1,101 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from uuid import UUID
 
+import bcrypt
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.auth import create_access_token, get_current_user
+from shared.auth import create_access_token, get_current_user, verify_token
 from shared.config import get_settings
+from shared.credits import SIGNUP_BONUS
 from shared.database import get_db
 from shared.models import User
+from shared.models.credit_transaction import CreditTransaction
 
-from ..models import DeviceLoginRequest, LoginRequest, OAuthCallbackRequest, TokenResponse, UserResponse
+from ..models import (
+    DeviceLoginRequest,
+    LoginEmailRequest,
+    OAuthCallbackRequest,
+    SignupRequest,
+    TokenResponse,
+    UserResponse,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
 
-# ── Google OAuth endpoints ──────────────────────────────────────────────
+ACCESS_TOKEN_MAX_AGE = settings.jwt_expiration_minutes * 60
+REFRESH_TOKEN_MAX_AGE = settings.refresh_token_expire_days * 86400
+
+
+# ── Password helpers ─────────────────────────────────────────────────
+
+def _hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode(), hashed.encode())
+
+
+# ── Cookie helpers ───────────────────────────────────────────────────
+
+def _set_auth_cookies(response: Response, user: User) -> str:
+    access_token = create_access_token(
+        user_id=user.id,
+        email=user.email,
+        expires_delta=timedelta(minutes=settings.jwt_expiration_minutes),
+    )
+    refresh_token = create_access_token(
+        user_id=user.id,
+        email=user.email,
+        expires_delta=timedelta(days=settings.refresh_token_expire_days),
+    )
+
+    cookie_kwargs = {
+        "httponly": True,
+        "samesite": "lax",
+        "secure": settings.cookie_secure,
+        "path": "/",
+    }
+    if settings.cookie_domain:
+        cookie_kwargs["domain"] = settings.cookie_domain
+
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        max_age=ACCESS_TOKEN_MAX_AGE,
+        **cookie_kwargs,
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        max_age=REFRESH_TOKEN_MAX_AGE,
+        **cookie_kwargs,
+    )
+
+    return access_token
+
+
+def _clear_auth_cookies(response: Response) -> None:
+    cookie_kwargs = {"path": "/", "httponly": True, "samesite": "lax"}
+    if settings.cookie_domain:
+        cookie_kwargs["domain"] = settings.cookie_domain
+    response.delete_cookie(key="access_token", **cookie_kwargs)
+    response.delete_cookie(key="refresh_token", **cookie_kwargs)
+
+
+# ── Google OAuth ─────────────────────────────────────────────────────
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 
 
 async def _exchange_google_code(code: str, redirect_uri: str) -> dict:
-    """Exchange Google authorization code for tokens and user info."""
     async with httpx.AsyncClient() as client:
-        # Exchange code for tokens
         token_resp = await client.post(
             GOOGLE_TOKEN_URL,
             data={
@@ -38,22 +107,15 @@ async def _exchange_google_code(code: str, redirect_uri: str) -> dict:
             },
         )
         if token_resp.status_code != 200:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Google token exchange failed: {token_resp.text}",
-            )
+            raise HTTPException(status_code=401, detail=f"Google token exchange failed: {token_resp.text}")
         token_data = token_resp.json()
 
-        # Fetch user info
         userinfo_resp = await client.get(
             GOOGLE_USERINFO_URL,
             headers={"Authorization": f"Bearer {token_data['access_token']}"},
         )
         if userinfo_resp.status_code != 200:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Failed to fetch Google user info",
-            )
+            raise HTTPException(status_code=401, detail="Failed to fetch Google user info")
         userinfo = userinfo_resp.json()
 
     return {
@@ -68,16 +130,14 @@ async def _exchange_google_code(code: str, redirect_uri: str) -> dict:
     }
 
 
-# ── Microsoft OAuth endpoints ──────────────────────────────────────────
+# ── Microsoft OAuth ──────────────────────────────────────────────────
 
 MICROSOFT_TOKEN_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
 MICROSOFT_USERINFO_URL = "https://graph.microsoft.com/v1.0/me"
 
 
 async def _exchange_microsoft_code(code: str, redirect_uri: str) -> dict:
-    """Exchange Microsoft authorization code for tokens and user info."""
     token_url = MICROSOFT_TOKEN_URL.format(tenant=settings.microsoft_tenant_id)
-
     async with httpx.AsyncClient() as client:
         token_resp = await client.post(
             token_url,
@@ -91,10 +151,7 @@ async def _exchange_microsoft_code(code: str, redirect_uri: str) -> dict:
             },
         )
         if token_resp.status_code != 200:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Microsoft token exchange failed: {token_resp.text}",
-            )
+            raise HTTPException(status_code=401, detail=f"Microsoft token exchange failed: {token_resp.text}")
         token_data = token_resp.json()
 
         userinfo_resp = await client.get(
@@ -102,10 +159,7 @@ async def _exchange_microsoft_code(code: str, redirect_uri: str) -> dict:
             headers={"Authorization": f"Bearer {token_data['access_token']}"},
         )
         if userinfo_resp.status_code != 200:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Failed to fetch Microsoft user info",
-            )
+            raise HTTPException(status_code=401, detail="Failed to fetch Microsoft user info")
         userinfo = userinfo_resp.json()
 
     return {
@@ -120,25 +174,18 @@ async def _exchange_microsoft_code(code: str, redirect_uri: str) -> dict:
     }
 
 
-# ── Upsert user helper ─────────────────────────────────────────────────
+# ── User upsert for OAuth ───────────────────────────────────────────
 
-
-async def _upsert_user(db: AsyncSession, oauth_data: dict) -> User:
-    """Create or update a user from OAuth data."""
-    result = await db.execute(
-        select(User).where(
-            User.auth_provider == oauth_data["provider"],
-            User.provider_id == oauth_data["provider_id"],
-        )
-    )
+async def _upsert_oauth_user(db: AsyncSession, oauth_data: dict) -> User:
+    # Check if user exists by email first (may have signed up with email/password)
+    result = await db.execute(select(User).where(User.email == oauth_data["email"]))
     user = result.scalar_one_or_none()
 
     now = datetime.now(timezone.utc)
-    expires_at = datetime.fromtimestamp(
-        now.timestamp() + oauth_data["expires_in"], tz=timezone.utc
-    )
+    expires_at = datetime.fromtimestamp(now.timestamp() + oauth_data["expires_in"], tz=timezone.utc)
 
-    if user is None:
+    is_new_user = user is None
+    if is_new_user:
         user = User(
             email=oauth_data["email"],
             name=oauth_data["name"],
@@ -148,93 +195,145 @@ async def _upsert_user(db: AsyncSession, oauth_data: dict) -> User:
             access_token=oauth_data["access_token"],
             refresh_token=oauth_data["refresh_token"],
             token_expires_at=expires_at,
+            email_verified=True,
+            credit_balance=SIGNUP_BONUS,
+            lifetime_credits=SIGNUP_BONUS,
         )
         db.add(user)
     else:
-        user.email = oauth_data["email"]
-        user.name = oauth_data["name"]
+        user.name = oauth_data["name"] or user.name
         user.avatar_url = oauth_data["avatar_url"] or user.avatar_url
+        user.auth_provider = oauth_data["provider"]
+        user.provider_id = oauth_data["provider_id"]
         user.access_token = oauth_data["access_token"]
         if oauth_data["refresh_token"]:
             user.refresh_token = oauth_data["refresh_token"]
         user.token_expires_at = expires_at
+        user.email_verified = True
         user.updated_at = now
 
     await db.flush()
     await db.refresh(user)
+
+    if is_new_user:
+        tx = CreditTransaction(
+            user_id=user.id,
+            amount=SIGNUP_BONUS,
+            balance_after=SIGNUP_BONUS,
+            type="signup_bonus",
+            description=f"Welcome bonus: {SIGNUP_BONUS} credits",
+        )
+        db.add(tx)
+        await db.flush()
+
     return user
 
 
-def _build_token_response(user: User) -> TokenResponse:
-    """Build JWT token response from a user record."""
-    jwt_token = create_access_token(user_id=user.id, email=user.email)
-    return TokenResponse(
-        access_token=jwt_token,
-        token_type="bearer",
-        expires_in=settings.jwt_expiration_minutes * 60,
-        user=UserResponse.model_validate(user),
+# ── Routes ───────────────────────────────────────────────────────────
+
+
+@router.post("/signup")
+async def signup(
+    body: SignupRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    """Register a new user with email and password."""
+    existing = await db.execute(select(User).where(User.email == body.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+
+    user = User(
+        email=body.email,
+        name=body.name,
+        password_hash=_hash_password(body.password),
+        auth_provider="email",
+        email_verified=False,
+        credit_balance=SIGNUP_BONUS,
+        lifetime_credits=SIGNUP_BONUS,
     )
+    db.add(user)
+    await db.flush()
+    await db.refresh(user)
 
+    # Log the signup bonus credit transaction
+    tx = CreditTransaction(
+        user_id=user.id,
+        amount=SIGNUP_BONUS,
+        balance_after=SIGNUP_BONUS,
+        type="signup_bonus",
+        description=f"Welcome bonus: {SIGNUP_BONUS} credits",
+    )
+    db.add(tx)
 
-# ── Routes ──────────────────────────────────────────────────────────────
+    access_token = _set_auth_cookies(response, user)
 
-
-@router.get("/oauth/google/url")
-async def google_oauth_url(
-    redirect_uri: str = Query(..., description="Frontend callback URL"),
-) -> dict:
-    """Return the Google OAuth consent URL for the frontend to redirect to."""
-    if not settings.google_client_id:
-        raise HTTPException(status_code=400, detail="Google OAuth not configured. Set google_client_id first.")
-    params = {
-        "client_id": settings.google_client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": "openid email profile https://www.googleapis.com/auth/calendar.readonly",
-        "access_type": "offline",
-        "prompt": "consent",
+    return {
+        "access_token": access_token,
+        "user": UserResponse.model_validate(user),
     }
-    return {"url": f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"}
 
 
-@router.get("/oauth/microsoft/url")
-async def microsoft_oauth_url(
-    redirect_uri: str = Query(..., description="Frontend callback URL"),
-) -> dict:
-    """Return the Microsoft OAuth consent URL for the frontend to redirect to."""
-    if not settings.microsoft_client_id:
-        raise HTTPException(status_code=400, detail="Microsoft OAuth not configured. Set microsoft_client_id first.")
-    tenant = settings.microsoft_tenant_id or "common"
-    params = {
-        "client_id": settings.microsoft_client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": "openid profile email User.Read Calendars.Read",
-        "response_mode": "query",
+@router.post("/login")
+async def login_email(
+    body: LoginEmailRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    """Login with email and password. Sets HTTP-only auth cookies."""
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+
+    if not user or not user.password_hash:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if not _verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is deactivated")
+
+    access_token = _set_auth_cookies(response, user)
+
+    return {
+        "access_token": access_token,
+        "user": UserResponse.model_validate(user),
     }
-    return {"url": f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize?{urlencode(params)}"}
 
 
-@router.post("/login/google", response_model=TokenResponse)
-async def login_google(
-    body: OAuthCallbackRequest,
+@router.post("/logout")
+async def logout(response: Response):
+    """Clear auth cookies."""
+    _clear_auth_cookies(response)
+    return {"message": "Logged out"}
+
+
+@router.post("/refresh")
+async def refresh_token(
+    request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
-) -> TokenResponse:
-    """Google OAuth callback: exchange code, create/update user, return JWT."""
-    oauth_data = await _exchange_google_code(body.code, body.redirect_uri)
-    user = await _upsert_user(db, oauth_data)
-    return _build_token_response(user)
+):
+    """Refresh access token using the refresh cookie."""
+    token = request.cookies.get("refresh_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="No refresh token")
 
+    try:
+        payload = verify_token(token)
+    except HTTPException:
+        _clear_auth_cookies(response)
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-@router.post("/login/microsoft", response_model=TokenResponse)
-async def login_microsoft(
-    body: OAuthCallbackRequest,
-    db: AsyncSession = Depends(get_db),
-) -> TokenResponse:
-    """Microsoft OAuth callback: exchange code, create/update user, return JWT."""
-    oauth_data = await _exchange_microsoft_code(body.code, body.redirect_uri)
-    user = await _upsert_user(db, oauth_data)
-    return _build_token_response(user)
+    user_id = UUID(payload["sub"])
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        _clear_auth_cookies(response)
+        raise HTTPException(status_code=401, detail="User not found")
+
+    _set_auth_cookies(response, user)
+    return {"user": UserResponse.model_validate(user)}
 
 
 @router.get("/me", response_model=UserResponse)
@@ -247,28 +346,78 @@ async def get_me(
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
+        raise HTTPException(status_code=404, detail="User not found")
     return UserResponse.model_validate(user)
 
 
-@router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(
-    current_user: dict = Depends(get_current_user),
+# ── OAuth redirect endpoints (server-side redirect flow) ─────────────
+
+
+@router.get("/oauth/google")
+async def google_oauth_redirect(
+    redirect_uri: str = Query(default=""),
+):
+    """Redirect user to Google OAuth consent screen."""
+    if not settings.google_client_id:
+        raise HTTPException(status_code=400, detail="Google OAuth not configured")
+    callback_url = redirect_uri or f"{settings.frontend_url}/auth/callback/google"
+    params = {
+        "client_id": settings.google_client_id,
+        "redirect_uri": callback_url,
+        "response_type": "code",
+        "scope": "openid email profile https://www.googleapis.com/auth/calendar.readonly",
+        "access_type": "offline",
+        "prompt": "consent",
+    }
+    return {"url": f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"}
+
+
+@router.post("/oauth/google/callback")
+async def google_oauth_callback(
+    body: OAuthCallbackRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db),
-) -> TokenResponse:
-    """Refresh the JWT token for the current user."""
-    user_id = UUID(current_user["sub"])
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
-    return _build_token_response(user)
+):
+    """Exchange Google auth code for tokens, create/update user, set cookies."""
+    oauth_data = await _exchange_google_code(body.code, body.redirect_uri)
+    user = await _upsert_oauth_user(db, oauth_data)
+    access_token = _set_auth_cookies(response, user)
+    return {"access_token": access_token, "user": UserResponse.model_validate(user)}
+
+
+@router.get("/oauth/microsoft")
+async def microsoft_oauth_redirect(
+    redirect_uri: str = Query(default=""),
+):
+    """Redirect user to Microsoft OAuth consent screen."""
+    if not settings.microsoft_client_id:
+        raise HTTPException(status_code=400, detail="Microsoft OAuth not configured")
+    callback_url = redirect_uri or f"{settings.frontend_url}/auth/callback/microsoft"
+    tenant = settings.microsoft_tenant_id or "common"
+    params = {
+        "client_id": settings.microsoft_client_id,
+        "redirect_uri": callback_url,
+        "response_type": "code",
+        "scope": "openid profile email User.Read Calendars.Read",
+        "response_mode": "query",
+    }
+    return {"url": f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize?{urlencode(params)}"}
+
+
+@router.post("/oauth/microsoft/callback")
+async def microsoft_oauth_callback(
+    body: OAuthCallbackRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    """Exchange Microsoft auth code for tokens, create/update user, set cookies."""
+    oauth_data = await _exchange_microsoft_code(body.code, body.redirect_uri)
+    user = await _upsert_oauth_user(db, oauth_data)
+    access_token = _set_auth_cookies(response, user)
+    return {"access_token": access_token, "user": UserResponse.model_validate(user)}
+
+
+# ── Legacy: Device login (for Electron desktop app) ─────────────────
 
 
 @router.post("/device-login", response_model=TokenResponse)
@@ -276,17 +425,10 @@ async def device_login(
     body: DeviceLoginRequest,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
-    """
-    Login for the Electron desktop agent.
-    Creates or retrieves a local device user (no OAuth required) and returns a JWT.
-    """
+    """Login for the Electron desktop agent. Returns JWT in body (not cookies)."""
     device_email = "agent@local.device"
-
     result = await db.execute(
-        select(User).where(
-            User.auth_provider == "device",
-            User.email == device_email,
-        )
+        select(User).where(User.auth_provider == "device", User.email == device_email)
     )
     user = result.scalar_one_or_none()
 
@@ -301,4 +443,10 @@ async def device_login(
         await db.flush()
         await db.refresh(user)
 
-    return _build_token_response(user)
+    jwt_token = create_access_token(user_id=user.id, email=user.email)
+    return TokenResponse(
+        access_token=jwt_token,
+        token_type="bearer",
+        expires_in=settings.jwt_expiration_minutes * 60,
+        user=UserResponse.model_validate(user),
+    )

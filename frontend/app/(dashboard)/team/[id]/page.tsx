@@ -27,20 +27,20 @@ import { api, type TeamMember } from "@/lib/api";
 export default function MemberProfilePage() {
   const params = useParams();
   const memberId = params.id as string;
-  const { token, loading: authLoading } = useAuth();
+  const { loading: authLoading } = useAuth();
 
   const [member, setMember] = useState<TeamMember | null>(null);
   const [workload, setWorkload] = useState<{ open_tasks: number; completed_tasks: number; meetings_attended: number } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!token || !memberId) return;
+    if (authLoading || !memberId) return;
 
     async function fetchData() {
       try {
         const [profile, wl] = await Promise.all([
-          api.team.get(token, memberId),
-          api.team.workload(token, memberId).catch(() => null),
+          api.team.get(memberId),
+          api.team.workload(memberId).catch(() => null),
         ]);
         setMember(profile);
         setWorkload(wl);
@@ -52,7 +52,7 @@ export default function MemberProfilePage() {
     }
 
     fetchData();
-  }, [token, memberId]);
+  }, [authLoading, memberId]);
 
   if (authLoading || loading) {
     return (

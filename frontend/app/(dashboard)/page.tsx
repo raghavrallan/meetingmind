@@ -12,6 +12,7 @@ import {
   ArrowRight,
   AlertCircle,
   Loader2,
+  Coins,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,21 +63,21 @@ function formatMeetingDuration(seconds: number): string {
 }
 
 export default function DashboardPage() {
-  const { token, user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!token) return;
+    if (authLoading) return;
 
     async function fetchData() {
       try {
         const [m, p, t] = await Promise.all([
-          api.meetings.list(token),
-          api.projects.list(token),
-          api.tasks.list(token),
+          api.meetings.list(),
+          api.projects.list(),
+          api.tasks.list(),
         ]);
         setMeetings(m);
         setProjects(p);
@@ -89,7 +90,7 @@ export default function DashboardPage() {
     }
 
     fetchData();
-  }, [token]);
+  }, [authLoading]);
 
   if (authLoading || loading) {
     return (
@@ -126,7 +127,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats Row */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <StatCard
           title="Total Meetings"
           value={totalMeetings}
@@ -147,6 +148,11 @@ export default function DashboardPage() {
           title="Hours Recorded"
           value={`${hoursRecorded.toFixed(1)}h`}
           icon={Clock}
+        />
+        <StatCard
+          title="Credit Balance"
+          value={user?.credit_balance?.toLocaleString() ?? 0}
+          icon={Coins}
         />
       </div>
 

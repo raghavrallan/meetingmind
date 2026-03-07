@@ -15,6 +15,7 @@ import {
   Shield,
   Trash2,
   AlertCircle,
+  Coins,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,30 +45,6 @@ interface ApiKeyField {
   placeholder: string;
   required?: boolean;
 }
-
-const API_KEY_FIELDS: ApiKeyField[] = [
-  {
-    key: "deepgram_api_key",
-    label: "Deepgram API Key",
-    description: "Required for speech-to-text transcription. Get yours at console.deepgram.com",
-    placeholder: "Enter your Deepgram API key",
-    required: true,
-  },
-  {
-    key: "anthropic_api_key",
-    label: "Anthropic API Key",
-    description: "Required for AI-powered meeting summaries, notes, and action items",
-    placeholder: "Enter your Anthropic API key",
-    required: true,
-  },
-  {
-    key: "openai_api_key",
-    label: "OpenAI API Key",
-    description: "Required for embedding generation and semantic search (text-embedding-3-small)",
-    placeholder: "Enter your OpenAI API key",
-    required: true,
-  },
-];
 
 const OAUTH_FIELDS: ApiKeyField[] = [
   {
@@ -103,7 +80,7 @@ const OAUTH_FIELDS: ApiKeyField[] = [
 ];
 
 export default function SettingsPage() {
-  const { token: authToken, user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
   // Profile
   const [name, setName] = useState("User");
@@ -114,14 +91,10 @@ export default function SettingsPage() {
   // Calendar connection status
   const [googleConnected, setGoogleConnected] = useState(false);
   const [microsoftConnected, setMicrosoftConnected] = useState(false);
-  const [connectingGoogle, setConnectingGoogle] = useState(false);
-  const [connectingMicrosoft, setConnectingMicrosoft] = useState(false);
 
-  // API Keys — the values shown in the form
+  // Settings state
   const [keyValues, setKeyValues] = useState<Record<string, string>>({});
-  // Which keys are stored in DB
   const [storedKeys, setStoredKeys] = useState<Record<string, UserSettingResponse>>({});
-  // Visibility toggles
   const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set());
 
   // UI state
@@ -130,8 +103,6 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
-
-  const token = authToken || "";
 
   // Set profile from auth user
   useEffect(() => {
@@ -144,7 +115,7 @@ export default function SettingsPage() {
   const loadSettings = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await api.settings.list(token);
+      const data = await api.settings.list();
       const stored: Record<string, UserSettingResponse> = {};
       const values: Record<string, string> = {};
 
@@ -161,7 +132,7 @@ export default function SettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     loadSettings();
@@ -171,7 +142,7 @@ export default function SettingsPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
-    if (!code || !token) return;
+    if (!code) return;
 
     const redirectUri = `${window.location.origin}/settings`;
 
@@ -192,7 +163,7 @@ export default function SettingsPage() {
         window.history.replaceState({}, "", "/settings");
       }
     })();
-  }, [token]);
+  }, []);
 
   const handleKeyChange = (key: string, value: string) => {
     setKeyValues((prev) => ({ ...prev, [key]: value }));
@@ -210,7 +181,7 @@ export default function SettingsPage() {
   const handleDeleteKey = async (key: string) => {
     try {
       setDeletingKey(key);
-      await api.settings.delete(token, key);
+      await api.settings.delete(key);
       setKeyValues((prev) => ({ ...prev, [key]: "" }));
       setStoredKeys((prev) => {
         const next = { ...prev };
@@ -238,7 +209,7 @@ export default function SettingsPage() {
       }
 
       if (settings.length > 0) {
-        await api.settings.upsert(token, settings);
+        await api.settings.upsert(settings);
       }
 
       setSaved(true);
@@ -360,7 +331,7 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground">
-          Manage your account, integrations, and API keys
+          Manage your account, integrations, and preferences
         </p>
       </div>
 
@@ -430,25 +401,35 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* API Keys — the main new section */}
+      {/* Credits */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Key className="h-5 w-5" />
-            <CardTitle>API Keys</CardTitle>
+            <Coins className="h-5 w-5" />
+            <CardTitle>Credits</CardTitle>
           </div>
           <CardDescription>
-            <div className="flex items-start gap-2">
-              <Shield className="h-4 w-4 mt-0.5 text-green-500 shrink-0" />
-              <span>
-                All keys are <strong>encrypted with AES-256</strong> (Fernet) before storage.
-                Only masked previews are shown. Your raw keys are never exposed in the UI.
-              </span>
-            </div>
+            Your AI processing credit balance
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {API_KEY_FIELDS.map(renderKeyField)}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="rounded-lg border border-[hsl(var(--border))] p-4 text-center">
+              <p className="text-sm text-muted-foreground">Current Balance</p>
+              <p className="text-3xl font-bold mt-1">
+                {user?.credit_balance?.toLocaleString() ?? 0}
+              </p>
+            </div>
+            <div className="rounded-lg border border-[hsl(var(--border))] p-4 text-center">
+              <p className="text-sm text-muted-foreground">Lifetime Credits Used</p>
+              <p className="text-3xl font-bold mt-1">
+                {((user?.lifetime_credits ?? 0) - (user?.credit_balance ?? 0)).toLocaleString()}
+              </p>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Credits are managed by your administrator
+          </p>
         </CardContent>
       </Card>
 
@@ -494,23 +475,16 @@ export default function SettingsPage() {
                   variant="outline"
                   onClick={async () => {
                     try {
-                      setConnectingGoogle(true);
                       const redirectUri = `${window.location.origin}/settings`;
-                      const { url } = await api.oauth.googleUrl(token, redirectUri);
+                      const { url } = await api.oauth.googleUrl(redirectUri);
                       window.location.href = url;
                     } catch {
                       setError("Failed to start Google OAuth. Ensure Google client credentials are configured.");
-                    } finally {
-                      setConnectingGoogle(false);
                     }
                   }}
-                  disabled={!storedKeys["google_client_id"]?.has_value || connectingGoogle}
+                  disabled={!storedKeys["google_client_id"]?.has_value}
                 >
-                  {connectingGoogle ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <ExternalLink className="mr-2 h-4 w-4" />
-                  )}
+                  <ExternalLink className="mr-2 h-4 w-4" />
                   {storedKeys["google_client_id"]?.has_value ? "Connect" : "Set keys first"}
                 </Button>
               )}
@@ -541,23 +515,16 @@ export default function SettingsPage() {
                   variant="outline"
                   onClick={async () => {
                     try {
-                      setConnectingMicrosoft(true);
                       const redirectUri = `${window.location.origin}/settings`;
-                      const { url } = await api.oauth.microsoftUrl(token, redirectUri);
+                      const { url } = await api.oauth.microsoftUrl(redirectUri);
                       window.location.href = url;
                     } catch {
                       setError("Failed to start Microsoft OAuth. Ensure Microsoft client credentials are configured.");
-                    } finally {
-                      setConnectingMicrosoft(false);
                     }
                   }}
-                  disabled={!storedKeys["microsoft_client_id"]?.has_value || connectingMicrosoft}
+                  disabled={!storedKeys["microsoft_client_id"]?.has_value}
                 >
-                  {connectingMicrosoft ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <ExternalLink className="mr-2 h-4 w-4" />
-                  )}
+                  <ExternalLink className="mr-2 h-4 w-4" />
                   {storedKeys["microsoft_client_id"]?.has_value ? "Connect" : "Set keys first"}
                 </Button>
               )}

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class UserResponse(BaseModel):
@@ -13,11 +13,26 @@ class UserResponse(BaseModel):
     timezone: str = "UTC"
     preferred_language: str = "en"
     auth_provider: str
+    email_verified: bool = False
+    credit_balance: int = 0
+    lifetime_credits: int = 0
+    is_admin: bool = False
     is_active: bool = True
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SignupRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+
+
+class LoginEmailRequest(BaseModel):
+    email: EmailStr
+    password: str
 
 
 class LoginRequest(BaseModel):

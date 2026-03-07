@@ -174,7 +174,7 @@ function MobileSidebar() {
   );
 }
 
-function TopHeader({ userName, userEmail }: { userName: string; userEmail: string }) {
+function TopHeader({ userName, userEmail, onLogout }: { userName: string; userEmail: string; onLogout: () => void }) {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -240,10 +240,7 @@ function TopHeader({ userName, userEmail }: { userName: string; userEmail: strin
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onClick={() => {
-                localStorage.removeItem("ai-notetaker-dev-token");
-                window.location.href = "/login";
-              }}
+              onClick={onLogout}
             >
               <LogOut className="mr-2 h-4 w-4" />
               <span>Log out</span>
@@ -260,7 +257,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const userName = user?.name || "User";
   const userEmail = user?.email || "user@example.com";
 
@@ -268,7 +265,7 @@ export default function DashboardLayout({
     <div className="flex h-screen overflow-hidden">
       <Sidebar userName={userName} userEmail={userEmail} />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <TopHeader userName={userName} userEmail={userEmail} />
+        <TopHeader userName={userName} userEmail={userEmail} onLogout={logout} />
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">{children}</main>
       </div>
     </div>

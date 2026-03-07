@@ -13,20 +13,29 @@ settings = get_settings()
 DEEPGRAM_WS_URL = "wss://api.deepgram.com/v1/listen"
 
 
+SUPPORTED_LANGUAGES = {
+    "multi", "en", "en-IN", "hi", "pa", "es", "fr", "de", "ja", "zh", "ko", "pt", "ar",
+}
+
+
 class DeepgramStreamClient:
     """Async Deepgram WebSocket streaming client for real-time transcription.
 
-    Connects to Deepgram's streaming API with multichannel, diarization,
-    and Nova-3 model configuration. Implements async context manager pattern.
+    Supports Hindi, Hinglish, Punjabi, Indian English accents, and 10+ languages
+    via Deepgram Nova-3 with smart formatting and enhanced accuracy.
     """
 
     def __init__(
         self,
         on_transcript: Optional[Callable[[dict], None]] = None,
-        language: str = "en",
+        language: str = "multi",
+        api_key: Optional[str] = None,
+        channels: int = 1,
     ):
         self._on_transcript = on_transcript
-        self._language = language
+        self._language = language if language in SUPPORTED_LANGUAGES else "multi"
+        self._api_key = api_key or settings.deepgram_api_key
+        self._channels = max(1, min(channels, 2))
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
         self._receive_task: Optional[asyncio.Task] = None
         self._connected = False
@@ -36,19 +45,35 @@ class DeepgramStreamClient:
         return self._connected and self._ws is not None
 
     def _build_url(self) -> str:
-        """Build the Deepgram WebSocket URL with query parameters."""
+        """Build the Deepgram WebSocket URL with query parameters.
+
+        When language=multi, multichannel must be disabled (Deepgram constraint).
+        When channels=1 (mic only), use mono mode.
+        Speaker separation is handled by diarize.
+        """
+        is_multi = self._language == "multi"
+        use_multichannel = self._channels == 2 and not is_multi
+
         params = {
             "model": "nova-3",
-            "multichannel": "true",
-            "channels": "2",
             "diarize": "true",
             "punctuate": "true",
             "utterances": "true",
             "interim_results": "true",
-            "language": self._language,
+            "smart_format": "true",
+            "filler_words": "false",
             "encoding": "linear16",
             "sample_rate": "16000",
+            "language": self._language,
         }
+
+        if use_multichannel:
+            params["multichannel"] = "true"
+            params["channels"] = str(self._channels)
+        else:
+            params["multichannel"] = "false"
+            params["channels"] = str(self._channels)
+
         query_string = "&".join(f"{k}={v}" for k, v in params.items())
         return f"{DEEPGRAM_WS_URL}?{query_string}"
 
@@ -56,7 +81,7 @@ class DeepgramStreamClient:
         """Establish WebSocket connection to Deepgram."""
         url = self._build_url()
         headers = {
-            "Authorization": f"Token {settings.deepgram_api_key}",
+            "Authorization": f"Token {self._api_key}",
         }
 
         try:

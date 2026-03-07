@@ -6,8 +6,9 @@ import { api } from "@/lib/api";
 
 interface UseWebSocketOptions {
   meetingId: string | null;
-  token: string | null;
   role: "recorder" | "viewer";
+  language?: string;
+  channels?: number;
   enabled?: boolean;
 }
 
@@ -20,26 +21,25 @@ interface UseWebSocketReturn {
 }
 
 export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
-  const { meetingId, token, role, enabled = true } = options;
+  const { meetingId, role, language = "multi", channels = 1, enabled = true } = options;
   const wsRef = useRef<WebSocket | null>(null);
   const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const connectionStatus = useMeetingStore((s) => s.connectionStatus);
 
   useEffect(() => {
-    if (!enabled || !meetingId || !token) return;
+    if (!enabled || !meetingId) return;
 
     const store = useMeetingStore.getState();
     store.setConnectionStatus("connecting");
 
-    const url = api.meetings.wsUrl(meetingId, token);
+    const url = api.meetings.wsUrl(meetingId);
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
     ws.binaryType = "arraybuffer";
 
     ws.onopen = () => {
-      // Send role assignment as first message
-      ws.send(JSON.stringify({ role }));
+      ws.send(JSON.stringify({ role, language, channels }));
     };
 
     ws.onmessage = (event) => {
@@ -102,7 +102,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       }
       wsRef.current = null;
     };
-  }, [enabled, meetingId, token, role]);
+  }, [enabled, meetingId, role]);
 
   const sendAudio = useCallback((chunk: ArrayBuffer) => {
     const ws = wsRef.current;

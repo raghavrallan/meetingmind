@@ -45,7 +45,7 @@ const projectColors = [
 ];
 
 export default function ProjectsPage() {
-  const { token, loading: authLoading } = useAuth();
+  const { loading: authLoading } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -55,11 +55,11 @@ export default function ProjectsPage() {
   const [newProjectColor, setNewProjectColor] = useState(projectColors[0]);
 
   useEffect(() => {
-    if (!token) return;
+    if (authLoading) return;
 
     async function fetchData() {
       try {
-        const p = await api.projects.list(token);
+        const p = await api.projects.list();
         setProjects(p);
       } catch (err) {
         console.error("Failed to fetch projects:", err);
@@ -69,7 +69,7 @@ export default function ProjectsPage() {
     }
 
     fetchData();
-  }, [token]);
+  }, [authLoading]);
 
   if (authLoading || loading) {
     return (
@@ -87,9 +87,9 @@ export default function ProjectsPage() {
   );
 
   const handleCreateProject = async () => {
-    if (!token || !newProjectName.trim()) return;
+    if (!newProjectName.trim()) return;
     try {
-      const created = await api.projects.create(token, {
+      const created = await api.projects.create({
         name: newProjectName,
         description: newProjectDescription,
         color: newProjectColor,

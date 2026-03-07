@@ -8,19 +8,16 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.auth import get_current_user
-from shared.config import get_settings
+from shared.credits import check_and_deduct_credits, CREDIT_COSTS, InsufficientCreditsError
 from shared.database import get_db
 from shared.models import MeetingNote, Meeting, Transcript
+from shared.platform_keys import get_platform_key
 
 from ..models import NotesResponse, NoteRegenerateRequest
 from ..prompts import MEETING_NOTES_SYSTEM_PROMPT, MEETING_NOTES_USER_PROMPT
 from ..rag import build_context
 
 router = APIRouter(prefix="/notes", tags=["notes"])
-settings = get_settings()
-
-# Initialize async Anthropic client
-anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 MODEL_NAME = "claude-sonnet-4-20250514"
 
@@ -104,6 +101,33 @@ async def regenerate_notes(
             detail=f"No transcript available for meeting {meeting_id}",
         )
 
+    # Deduct credits before AI generation
+    user_id = UUID(current_user["sub"])
+    try:
+        await check_and_deduct_credits(
+            db,
+            user_id=user_id,
+            cost=CREDIT_COSTS["note_generation"],
+            operation="note_generation",
+            provider="anthropic",
+            meeting_id=meeting_id,
+            description="Regenerate meeting notes",
+        )
+    except InsufficientCreditsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=str(e),
+        )
+
+    # Get platform API key for Anthropic
+    api_key = await get_platform_key(db, "anthropic")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Anthropic API key not configured",
+        )
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+
     # Build RAG context from past meetings
     context = await build_context(db, meeting_id, meeting.project_id)
 
@@ -129,7 +153,7 @@ async def regenerate_notes(
     # Call Claude to generate notes
     start_time = time.time()
     try:
-        response = await anthropic_client.messages.create(
+        response = await client.messages.create(
             model=MODEL_NAME,
             max_tokens=4096,
             system=MEETING_NOTES_SYSTEM_PROMPT,

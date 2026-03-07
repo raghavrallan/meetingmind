@@ -1,76 +1,87 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { api } from "@/lib/api";
+import { useState, useEffect, useCallback } from "react";
 
-interface AuthUser {
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost";
+
+export interface AuthUser {
   id: string;
   email: string;
   name: string;
+  avatar_url?: string;
+  auth_provider: string;
+  credit_balance?: number;
+  lifetime_credits?: number;
+  is_admin?: boolean;
 }
 
 interface AuthState {
-  token: string | null;
   user: AuthUser | null;
   loading: boolean;
   error: string | null;
 }
 
-const STORAGE_KEY = "ai-notetaker-dev-token";
-
-export function useAuth(): AuthState {
+export function useAuth() {
   const [state, setState] = useState<AuthState>({
-    token: null,
     user: null,
     loading: true,
     error: null,
   });
 
-  useEffect(() => {
-    let cancelled = false;
+  const fetchUser = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/auth/me`, {
+        credentials: "include",
+      });
 
-    async function authenticate() {
-      // Check localStorage first
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          if (parsed.token && parsed.user) {
-            // Verify token is still valid
-            try {
-              await api.auth.me(parsed.token);
-              if (!cancelled) {
-                setState({ token: parsed.token, user: parsed.user, loading: false, error: null });
-                return;
-              }
-            } catch {
-              // Token expired, fall through to re-login
-              localStorage.removeItem(STORAGE_KEY);
-            }
-          }
-        } catch {
-          localStorage.removeItem(STORAGE_KEY);
+      if (res.ok) {
+        const user = await res.json();
+        setState({ user, loading: false, error: null });
+        return;
+      }
+
+      if (res.status === 401) {
+        const refreshRes = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+        });
+
+        if (refreshRes.ok) {
+          const data = await refreshRes.json();
+          setState({ user: data.user, loading: false, error: null });
+          return;
         }
       }
 
-      // Device login
-      try {
-        const data = await api.auth.deviceLogin();
-        const authData = { token: data.access_token, user: data.user };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(authData));
-        if (!cancelled) {
-          setState({ token: data.access_token, user: data.user, loading: false, error: null });
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setState({ token: null, user: null, loading: false, error: "Failed to authenticate" });
-        }
-      }
+      setState({ user: null, loading: false, error: null });
+    } catch {
+      setState({ user: null, loading: false, error: "Failed to connect to server" });
     }
-
-    authenticate();
-    return () => { cancelled = true; };
   }, []);
 
-  return state;
+  useEffect(() => {
+    fetchUser();
+  }, [fetchUser]);
+
+  const logout = useCallback(async () => {
+    try {
+      await fetch(`${API_BASE}/api/v1/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // Clear cookies even if request fails
+    }
+    setState({ user: null, loading: false, error: null });
+    window.location.href = "/login";
+  }, []);
+
+  return {
+    user: state.user,
+    loading: state.loading,
+    error: state.error,
+    isAuthenticated: !!state.user,
+    logout,
+    refreshUser: fetchUser,
+  };
 }

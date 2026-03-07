@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 from celery import Celery
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -236,11 +236,32 @@ async def stop_recording(
 @router.get("/{meeting_id}/audio")
 async def get_meeting_audio(
     meeting_id: UUID,
-    current_user: dict = Depends(get_current_user),
+    request: Request,
+    token: Optional[str] = Query(None, description="JWT token fallback for audio player"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Stream the recorded audio for a meeting from MinIO."""
-    user_id = UUID(current_user["sub"])
+    """Stream the recorded audio for a meeting from MinIO.
+    Auth via: cookie (browser), ?token= query param (Electron), or Bearer header.
+    """
+    from shared.auth import verify_token as _verify
+
+    jwt_token = None
+    # 1. Cookie
+    jwt_token = request.cookies.get("access_token")
+    # 2. Query param fallback
+    if not jwt_token:
+        jwt_token = token
+    # 3. Bearer header fallback
+    if not jwt_token:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            jwt_token = auth_header[7:]
+
+    if not jwt_token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    payload = _verify(jwt_token)
+    user_id = UUID(payload["sub"])
     meeting = await _get_meeting_or_404(meeting_id, db, user_id)
 
     if not meeting.audio_storage_key:
@@ -250,7 +271,7 @@ async def get_meeting_audio(
         )
 
     try:
-        audio_data = await download_audio(meeting.audio_storage_key)
+        raw_audio = await download_audio(meeting.audio_storage_key)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -258,11 +279,39 @@ async def get_meeting_audio(
         )
 
     import io
+    import struct
+
+    sample_rate = 16000
+    num_channels = 1
+    bits_per_sample = 16
+    byte_rate = sample_rate * num_channels * bits_per_sample // 8
+    block_align = num_channels * bits_per_sample // 8
+    data_size = len(raw_audio)
+
+    wav_header = struct.pack(
+        '<4sI4s4sIHHIIHH4sI',
+        b'RIFF',
+        36 + data_size,
+        b'WAVE',
+        b'fmt ',
+        16,
+        1,
+        num_channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits_per_sample,
+        b'data',
+        data_size,
+    )
+
+    wav_data = wav_header + raw_audio
+
     return StreamingResponse(
-        io.BytesIO(audio_data),
+        io.BytesIO(wav_data),
         media_type="audio/wav",
         headers={
             "Content-Disposition": f'inline; filename="meeting-{meeting_id}.wav"',
-            "Content-Length": str(len(audio_data)),
+            "Content-Length": str(len(wav_data)),
         },
     )

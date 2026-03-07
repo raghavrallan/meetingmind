@@ -61,7 +61,7 @@ const statusLabels: Record<string, string> = {
 export default function ProjectDetailPage() {
   const params = useParams();
   const projectId = params.id as string;
-  const { token, loading: authLoading } = useAuth();
+  const { loading: authLoading } = useAuth();
 
   const [project, setProject] = useState<Project | null>(null);
   const [projectMeetings, setProjectMeetings] = useState<Meeting[]>([]);
@@ -72,14 +72,14 @@ export default function ProjectDetailPage() {
   const [isRegenerating, setIsRegenerating] = useState(false);
 
   useEffect(() => {
-    if (!token || !projectId) return;
+    if (authLoading || !projectId) return;
 
     async function fetchData() {
       try {
         const [p, meetings, members] = await Promise.all([
-          api.projects.get(token, projectId),
-          api.projects.meetings(token, projectId).catch(() => []),
-          api.projects.members(token, projectId).catch(() => []),
+          api.projects.get(projectId),
+          api.projects.meetings(projectId).catch(() => []),
+          api.projects.members(projectId).catch(() => []),
         ]);
         setProject(p);
         setProjectMeetings(meetings);
@@ -87,7 +87,7 @@ export default function ProjectDetailPage() {
 
         // Fetch tasks for this project
         try {
-          const tasks = await api.tasks.list(token, { project_id: projectId });
+          const tasks = await api.tasks.list({ project_id: projectId });
           setProjectTasks(tasks);
         } catch {
           // No tasks
@@ -95,7 +95,7 @@ export default function ProjectDetailPage() {
 
         // Fetch brief
         try {
-          const brief = await api.projects.brief(token, projectId);
+          const brief = await api.projects.brief(projectId);
           setProjectBrief(brief.brief || "");
         } catch {
           // No brief available
@@ -108,7 +108,7 @@ export default function ProjectDetailPage() {
     }
 
     fetchData();
-  }, [token, projectId]);
+  }, [authLoading, projectId]);
 
   if (authLoading || loading) {
     return (
@@ -132,10 +132,9 @@ export default function ProjectDetailPage() {
   }
 
   const handleRegenerate = async () => {
-    if (!token) return;
     setIsRegenerating(true);
     try {
-      const result = await api.projects.regenerateBrief(token, projectId);
+      const result = await api.projects.regenerateBrief(projectId);
       setProjectBrief(result.brief || "");
     } catch {
       // Regeneration failed

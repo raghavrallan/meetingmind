@@ -12,7 +12,11 @@ class Settings(BaseSettings):
     # Auth
     jwt_secret: str = "your-jwt-secret-change-me"
     jwt_algorithm: str = "HS256"
-    jwt_expiration_minutes: int = 1440
+    jwt_expiration_minutes: int = 15
+    refresh_token_expire_days: int = 7
+    cookie_domain: str = ""
+    cookie_secure: bool = False
+    frontend_url: str = "http://localhost:3000"
 
     # OAuth - Google
     google_client_id: str = ""
@@ -23,7 +27,10 @@ class Settings(BaseSettings):
     microsoft_client_secret: str = ""
     microsoft_tenant_id: str = "common"
 
-    # AI / Transcription
+    # Vault
+    vault_master_key: str = ""
+
+    # AI / Transcription (legacy fallbacks — use platform_keys table instead)
     deepgram_api_key: str = ""
     anthropic_api_key: str = ""
     openai_api_key: str = ""

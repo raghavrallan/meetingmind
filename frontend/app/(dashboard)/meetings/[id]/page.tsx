@@ -50,7 +50,7 @@ import {
 export default function MeetingDetailPage() {
   const params = useParams();
   const meetingId = params.id as string;
-  const { token, loading: authLoading } = useAuth();
+  const { loading: authLoading } = useAuth();
 
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [transcript, setTranscript] = useState<TranscriptUtterance[]>([]);
@@ -73,7 +73,6 @@ export default function MeetingDetailPage() {
   const liveTranscriptLines = useMeetingStore((s) => s.transcriptLines);
   const { isConnected } = useWebSocket({
     meetingId: isLive ? meetingId : null,
-    token,
     role: "viewer",
     enabled: isLive === true,
   });
@@ -83,16 +82,16 @@ export default function MeetingDetailPage() {
   const tts = useTTS();
 
   useEffect(() => {
-    if (!token || !meetingId) return;
+    if (authLoading || !meetingId) return;
 
     async function fetchData() {
       try {
-        const m = await api.meetings.get(token, meetingId);
+        const m = await api.meetings.get(meetingId);
         setMeeting(m);
 
         // Try transcript (may 404)
         try {
-          const t = await api.meetings.transcript(token, meetingId);
+          const t = await api.meetings.transcript(meetingId);
           setTranscript(t);
         } catch {
           // No transcript available
@@ -100,7 +99,7 @@ export default function MeetingDetailPage() {
 
         // Try notes (may 404)
         try {
-          const n = await api.meetings.notes(token, meetingId);
+          const n = await api.meetings.notes(meetingId);
           setNotes(n);
           setActionItems(n.action_items || []);
         } catch {
@@ -114,7 +113,7 @@ export default function MeetingDetailPage() {
     }
 
     fetchData();
-  }, [token, meetingId]);
+  }, [authLoading, meetingId]);
 
   // Set up audio element for playback
   useEffect(() => {

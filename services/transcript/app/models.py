@@ -15,7 +15,7 @@ class UtteranceResponse(BaseModel):
     start_time: float
     end_time: float
     confidence: float = 0.0
-    words_json: Optional[dict] = None
+    words_json: Optional[list | dict] = None
 
     model_config = {"from_attributes": True}
 
