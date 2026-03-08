@@ -41,7 +41,8 @@ export default function LoginPage() {
         throw new Error(data?.detail || "Invalid email or password");
       }
 
-      router.push("/");
+      const data = await res.json().catch(() => null);
+      router.push(data?.user?.is_admin ? "/admin" : "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

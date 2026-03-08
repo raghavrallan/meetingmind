@@ -11,11 +11,12 @@ security = HTTPBearer(auto_error=False)
 settings = get_settings()
 
 
-def create_access_token(user_id: UUID, email: str, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(user_id: UUID, email: str, is_admin: bool = False, expires_delta: Optional[timedelta] = None) -> str:
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.jwt_expiration_minutes))
     payload = {
         "sub": str(user_id),
         "email": email,
+        "is_admin": is_admin,
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }

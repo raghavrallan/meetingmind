@@ -10,11 +10,13 @@ import {
   BarChart3,
   Mic,
   Coins,
-  ArrowLeft,
+  Eye,
   Shield,
   Loader2,
+  LogOut,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 const navItems = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
@@ -30,7 +32,7 @@ export default function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, loading } = useAuth();
+  const { user, loading, logout } = useAuth();
   const pathname = usePathname();
 
   if (loading) {
@@ -86,14 +88,24 @@ export default function AdminLayout({
           })}
         </nav>
 
-        <div className="border-t border-[hsl(var(--border))] px-3 py-4">
-          <Link
-            href="/"
-            className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        <div className="border-t border-[hsl(var(--border))] px-3 py-4 space-y-2">
+          <button
+            onClick={() => {
+              document.cookie = "admin_viewing_as_user=true;path=/;max-age=86400;samesite=lax";
+              window.location.href = "/";
+            }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            <ArrowLeft className="h-4 w-4" />
-            Back to App
-          </Link>
+            <Eye className="h-4 w-4" />
+            View as User
+          </button>
+          <button
+            onClick={() => logout()}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-red-400 transition-colors hover:bg-red-500/10"
+          >
+            <LogOut className="h-4 w-4" />
+            Log out
+          </button>
         </div>
       </aside>
 

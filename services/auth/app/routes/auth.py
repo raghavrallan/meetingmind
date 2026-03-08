@@ -47,11 +47,13 @@ def _set_auth_cookies(response: Response, user: User) -> str:
     access_token = create_access_token(
         user_id=user.id,
         email=user.email,
+        is_admin=user.is_admin,
         expires_delta=timedelta(minutes=settings.jwt_expiration_minutes),
     )
     refresh_token = create_access_token(
         user_id=user.id,
         email=user.email,
+        is_admin=user.is_admin,
         expires_delta=timedelta(days=settings.refresh_token_expire_days),
     )
 
@@ -443,7 +445,7 @@ async def device_login(
         await db.flush()
         await db.refresh(user)
 
-    jwt_token = create_access_token(user_id=user.id, email=user.email)
+    jwt_token = create_access_token(user_id=user.id, email=user.email, is_admin=user.is_admin)
     return TokenResponse(
         access_token=jwt_token,
         token_type="bearer",

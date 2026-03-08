@@ -54,7 +54,8 @@ export default function SignupPage() {
         throw new Error(data?.detail || "Signup failed");
       }
 
-      router.push("/");
+      const data = await res.json().catch(() => null);
+      router.push(data?.user?.is_admin ? "/admin" : "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Signup failed");
     } finally {
