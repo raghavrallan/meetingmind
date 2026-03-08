@@ -6,7 +6,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Shield, ArrowLeft } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Loader2, Shield, ArrowLeft, Ban, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost";
@@ -55,6 +62,9 @@ export default function AdminUserDetailPage() {
   const [grantDescription, setGrantDescription] = useState("");
   const [granting, setGranting] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [suspendModalOpen, setSuspendModalOpen] = useState(false);
+  const [suspendReason, setSuspendReason] = useState("");
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 
   async function fetchUser() {
     try {
@@ -238,15 +248,10 @@ export default function AdminUserDetailPage() {
                 <Button
                   variant="outline"
                   className="w-full border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
-                  onClick={() => {
-                    const reason = window.prompt("Reason for suspension:");
-                    if (reason !== null) handleAction("suspend", { reason });
-                  }}
+                  onClick={() => { setSuspendReason(""); setSuspendModalOpen(true); }}
                   disabled={actionLoading !== null}
                 >
-                  {actionLoading === "suspend" && (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  )}
+                  <Ban className="h-4 w-4 mr-1" />
                   Suspend User
                 </Button>
               )}
@@ -269,15 +274,10 @@ export default function AdminUserDetailPage() {
                 <Button
                   variant="destructive"
                   className="w-full"
-                  onClick={() => {
-                    if (window.confirm("Are you sure you want to delete this user?"))
-                      handleAction("delete");
-                  }}
+                  onClick={() => setDeleteModalOpen(true)}
                   disabled={actionLoading !== null}
                 >
-                  {actionLoading === "delete" && (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  )}
+                  <AlertTriangle className="h-4 w-4 mr-1" />
                   Delete User
                 </Button>
               )}
@@ -401,6 +401,81 @@ export default function AdminUserDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Suspend Modal */}
+      <Dialog open={suspendModalOpen} onOpenChange={setSuspendModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Ban className="h-5 w-5 text-amber-500" />
+              Suspend {user.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              This will prevent the user from logging in. You can reactivate them at any time.
+            </p>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Reason for suspension</label>
+              <Input
+                placeholder="e.g. Violation of terms, Suspicious activity..."
+                value={suspendReason}
+                onChange={(e) => setSuspendReason(e.target.value)}
+                autoFocus
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSuspendModalOpen(false)} disabled={actionLoading !== null}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              disabled={!suspendReason.trim() || actionLoading !== null}
+              onClick={async () => {
+                await handleAction("suspend", { reason: suspendReason.trim() });
+                setSuspendModalOpen(false);
+              }}
+            >
+              {actionLoading === "suspend" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Ban className="mr-2 h-4 w-4" />}
+              Suspend User
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Modal */}
+      <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Delete {user.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              This is a soft delete -- the user's data (meetings, billing, transcripts) will be preserved. They will not be able to log in. You can restore them later.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteModalOpen(false)} disabled={actionLoading !== null}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={actionLoading !== null}
+              onClick={async () => {
+                await handleAction("delete");
+                setDeleteModalOpen(false);
+              }}
+            >
+              {actionLoading === "delete" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertTriangle className="mr-2 h-4 w-4" />}
+              Delete User
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {user.recent_usage?.length > 0 && (
         <Card>

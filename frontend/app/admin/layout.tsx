@@ -45,15 +45,29 @@ export default function AdminLayout({
 
   if (!user?.is_admin) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4">
+      <div className="flex h-screen flex-col items-center justify-center gap-6">
         <Shield className="h-12 w-12 text-destructive" />
         <h1 className="text-2xl font-bold">Access Denied</h1>
-        <p className="text-muted-foreground">
+        <p className="text-muted-foreground text-center max-w-sm">
           You do not have permission to access the admin panel.
         </p>
-        <Link href="/" className="text-primary underline hover:text-primary/80">
-          Back to App
-        </Link>
+        <div className="flex gap-3">
+          <button
+            onClick={() => {
+              document.cookie = "admin_viewing_as_user=true;path=/;max-age=86400;samesite=lax";
+              window.location.href = "/";
+            }}
+            className="text-sm text-primary underline hover:text-primary/80"
+          >
+            Go to Dashboard
+          </button>
+          <button
+            onClick={() => logout()}
+            className="text-sm text-destructive underline hover:text-destructive/80"
+          >
+            Log out
+          </button>
+        </div>
       </div>
     );
   }

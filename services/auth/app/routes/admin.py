@@ -4,12 +4,13 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, case, and_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.auth import get_current_user
+from shared.auth import get_current_user, create_access_token
+from shared.config import get_settings
 from shared.credits import add_credits
 from shared.database import get_db
 from shared.models.user import User
@@ -21,6 +22,24 @@ from shared.platform_keys import invalidate_cache
 from shared.vault import vault_encrypt
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+_settings = get_settings()
+
+
+def _refresh_admin_cookies(response: Response, admin: User) -> None:
+    """Re-issue the admin's JWT cookies to keep is_admin claim fresh."""
+    access_token = create_access_token(
+        user_id=admin.id, email=admin.email, is_admin=admin.is_admin,
+        expires_delta=timedelta(minutes=_settings.jwt_expiration_minutes),
+    )
+    refresh_token = create_access_token(
+        user_id=admin.id, email=admin.email, is_admin=admin.is_admin,
+        expires_delta=timedelta(days=_settings.refresh_token_expire_days),
+    )
+    cookie_kwargs = {"httponly": True, "samesite": "lax", "secure": _settings.cookie_secure, "path": "/"}
+    if _settings.cookie_domain:
+        cookie_kwargs["domain"] = _settings.cookie_domain
+    response.set_cookie(key="access_token", value=access_token, max_age=_settings.jwt_expiration_minutes * 60, **cookie_kwargs)
+    response.set_cookie(key="refresh_token", value=refresh_token, max_age=_settings.refresh_token_expire_days * 86400, **cookie_kwargs)
 
 
 async def _require_admin(current_user: dict, db: AsyncSession) -> User:
@@ -340,20 +359,23 @@ async def restore_user(
 @router.post("/users/{user_id}/make-admin")
 async def make_admin(
     user_id: UUID,
+    response: Response,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _require_admin(current_user, db)
+    admin = await _require_admin(current_user, db)
     user = await _get_user_or_404(user_id, db)
     user.is_admin = True
     user.updated_at = datetime.now(timezone.utc)
     await db.flush()
+    _refresh_admin_cookies(response, admin)
     return {"id": str(user.id), "is_admin": True}
 
 
 @router.post("/users/{user_id}/remove-admin")
 async def remove_admin(
     user_id: UUID,
+    response: Response,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -364,6 +386,7 @@ async def remove_admin(
     user.is_admin = False
     user.updated_at = datetime.now(timezone.utc)
     await db.flush()
+    _refresh_admin_cookies(response, admin)
     return {"id": str(user.id), "is_admin": False}
 
 
