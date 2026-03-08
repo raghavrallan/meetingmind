@@ -41,7 +41,7 @@ export default function AdminUsagePage() {
         );
         if (res.ok) {
           const data = await res.json();
-          setRecords(data.records ?? data.usage ?? []);
+          setRecords(data.logs ?? []);
           setTotal(data.total ?? 0);
         }
       } catch {

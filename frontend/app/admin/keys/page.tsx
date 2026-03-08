@@ -38,7 +38,7 @@ export default function AdminKeysPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        setKeys(data.keys ?? data ?? []);
+        setKeys(Array.isArray(data) ? data : []);
       }
     } catch {
       // silently fail

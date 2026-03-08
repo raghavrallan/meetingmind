@@ -30,14 +30,14 @@ interface Stats {
   total_users: number;
   active_users_7d: number;
   total_meetings: number;
-  credits_used: number;
-  credits_granted: number;
+  total_credits_used: number;
+  total_credits_granted: number;
   active_keys: number;
 }
 
 interface Charts {
   meetings_per_day: { date: string; count: number }[];
-  usage_by_operation: { operation: string; total_credits: number }[];
+  usage_by_operation: { operation: string; credits: number }[];
 }
 
 export default function AdminOverviewPage() {
@@ -95,12 +95,12 @@ export default function AdminOverviewPage() {
         />
         <StatCard
           title="Credits Used"
-          value={stats?.credits_used ?? 0}
+          value={stats?.total_credits_used ?? 0}
           icon={<Coins className="h-5 w-5" />}
         />
         <StatCard
           title="Credits Granted"
-          value={stats?.credits_granted ?? 0}
+          value={stats?.total_credits_granted ?? 0}
           icon={<Gift className="h-5 w-5" />}
         />
         <StatCard
@@ -175,7 +175,7 @@ export default function AdminOverviewPage() {
                     }}
                   />
                   <Bar
-                    dataKey="total_credits"
+                    dataKey="credits"
                     fill="hsl(var(--primary))"
                     radius={[4, 4, 0, 0]}
                   />
