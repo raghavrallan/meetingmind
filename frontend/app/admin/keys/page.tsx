@@ -33,7 +33,7 @@ export default function AdminKeysPage() {
 
   async function fetchKeys() {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/settings/platform-keys`, {
+      const res = await fetch(`${API_BASE}/api/v1/admin/platform-keys`, {
         credentials: "include",
       });
       if (res.ok) {
@@ -55,7 +55,7 @@ export default function AdminKeysPage() {
     if (!form.key_name || !form.provider || !form.value) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/settings/platform-keys`, {
+      const res = await fetch(`${API_BASE}/api/v1/admin/platform-keys`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -76,7 +76,7 @@ export default function AdminKeysPage() {
   async function handleDelete(keyName: string) {
     try {
       const res = await fetch(
-        `${API_BASE}/api/v1/settings/platform-keys/${keyName}`,
+        `${API_BASE}/api/v1/admin/platform-keys/${keyName}`,
         { method: "DELETE", credentials: "include" }
       );
       if (res.ok) await fetchKeys();

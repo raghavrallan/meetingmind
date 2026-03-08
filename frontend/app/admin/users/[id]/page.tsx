@@ -74,7 +74,7 @@ export default function AdminUserDetailPage() {
     setGranting(true);
     try {
       const res = await fetch(
-        `${API_BASE}/api/v1/settings/admin/credits/grant`,
+        `${API_BASE}/api/v1/admin/credits/grant`,
         {
           method: "POST",
           credentials: "include",
