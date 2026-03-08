@@ -12,7 +12,14 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { Loader2, Search, MoreHorizontal } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Loader2, Search, MoreHorizontal, AlertTriangle, Ban } from "lucide-react";
 import Link from "next/link";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost";
@@ -37,6 +44,10 @@ export default function AdminUsersPage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [suspendModal, setSuspendModal] = useState<{ open: boolean; userId: string; userName: string }>({ open: false, userId: "", userName: "" });
+  const [suspendReason, setSuspendReason] = useState("");
+  const [deleteModal, setDeleteModal] = useState<{ open: boolean; userId: string; userName: string }>({ open: false, userId: "", userName: "" });
+  const [actionLoading, setActionLoading] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -181,10 +192,11 @@ export default function AdminUsersPage() {
             {u.status === "active" && (
               <DropdownMenuItem
                 onClick={() => {
-                  const reason = window.prompt("Reason for suspension:");
-                  if (reason !== null) handleAction(u.id, "suspend", { reason });
+                  setSuspendReason("");
+                  setSuspendModal({ open: true, userId: u.id, userName: u.name });
                 }}
               >
+                <Ban className="mr-2 h-4 w-4" />
                 Suspend User
               </DropdownMenuItem>
             )}
@@ -196,11 +208,9 @@ export default function AdminUsersPage() {
             {(u.status === "active" || u.status === "suspended") && (
               <DropdownMenuItem
                 className="text-destructive"
-                onClick={() => {
-                  if (window.confirm("Are you sure you want to delete this user?"))
-                    handleAction(u.id, "delete");
-                }}
+                onClick={() => setDeleteModal({ open: true, userId: u.id, userName: u.name })}
               >
+                <AlertTriangle className="mr-2 h-4 w-4" />
                 Delete User
               </DropdownMenuItem>
             )}
@@ -257,6 +267,97 @@ export default function AdminUsersPage() {
         onPageChange={setPage}
         isLoading={loading}
       />
+
+      {/* Suspend User Modal */}
+      <Dialog open={suspendModal.open} onOpenChange={(open) => setSuspendModal((prev) => ({ ...prev, open }))}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Ban className="h-5 w-5 text-amber-500" />
+              Suspend User
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Suspending <span className="font-medium text-foreground">{suspendModal.userName}</span> will prevent them from logging in. You can reactivate them at any time.
+            </p>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Reason for suspension</label>
+              <Input
+                placeholder="e.g. Violation of terms, Suspicious activity..."
+                value={suspendReason}
+                onChange={(e) => setSuspendReason(e.target.value)}
+                autoFocus
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSuspendModal({ open: false, userId: "", userName: "" })}
+              disabled={actionLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              disabled={!suspendReason.trim() || actionLoading}
+              onClick={async () => {
+                setActionLoading(true);
+                await handleAction(suspendModal.userId, "suspend", { reason: suspendReason.trim() });
+                setSuspendModal({ open: false, userId: "", userName: "" });
+                setSuspendReason("");
+                setActionLoading(false);
+              }}
+            >
+              {actionLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Ban className="mr-2 h-4 w-4" />}
+              Suspend User
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete User Confirmation Modal */}
+      <Dialog open={deleteModal.open} onOpenChange={(open) => setDeleteModal((prev) => ({ ...prev, open }))}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Delete User
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Are you sure you want to delete <span className="font-medium text-foreground">{deleteModal.userName}</span>?
+            </p>
+            <p className="text-sm text-muted-foreground">
+              This is a soft delete -- the user's data (meetings, billing, transcripts) will be preserved. They will not be able to log in. You can restore them later.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteModal({ open: false, userId: "", userName: "" })}
+              disabled={actionLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={actionLoading}
+              onClick={async () => {
+                setActionLoading(true);
+                await handleAction(deleteModal.userId, "delete");
+                setDeleteModal({ open: false, userId: "", userName: "" });
+                setActionLoading(false);
+              }}
+            >
+              {actionLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <AlertTriangle className="mr-2 h-4 w-4" />}
+              Delete User
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
