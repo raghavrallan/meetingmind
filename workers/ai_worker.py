@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 import asyncio
@@ -13,14 +14,18 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from shared.models import Meeting, Transcript, TranscriptUtterance, MeetingNote, Task, MeetingEmbedding
 from shared.models.meeting import MeetingStatus
 from shared.models.task import TaskStatus, TaskPriority
+from shared.platform_keys import get_platform_key
+from shared.credits import check_and_deduct_credits, CREDIT_COSTS, InsufficientCreditsError
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://notetaker:notetaker_secret@postgres:5432/ai_notetaker")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
-engine = create_async_engine(DATABASE_URL, pool_size=5)
-async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+logger = logging.getLogger(__name__)
 
-claude = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+
+def _make_session():
+    """Create a fresh engine+session per invocation to avoid async pool conflicts."""
+    eng = create_async_engine(DATABASE_URL, pool_size=2, max_overflow=0)
+    return async_sessionmaker(eng, class_=AsyncSession, expire_on_commit=False), eng
 
 NOTES_SYSTEM_PROMPT = """You are an expert meeting note-taker. Given a meeting transcript and optional context from previous meetings, generate comprehensive structured meeting notes.
 
@@ -121,105 +126,116 @@ async def _generate_notes(meeting_id: str):
     mid = UUID(meeting_id)
     start = time.time()
 
-    async with async_session() as session:
-        # Get meeting
-        meeting = await session.get(Meeting, mid)
-        if not meeting:
-            raise ValueError(f"Meeting {meeting_id} not found")
+    session_factory, eng = _make_session()
+    try:
+        async with session_factory() as session:
+            meeting = await session.get(Meeting, mid)
+            if not meeting:
+                raise ValueError(f"Meeting {meeting_id} not found")
 
-        # Get transcript
-        transcript_text = await _get_transcript(session, mid)
-        if not transcript_text:
-            raise ValueError(f"No transcript found for meeting {meeting_id}")
+            transcript_text = await _get_transcript(session, mid)
+            if not transcript_text:
+                raise ValueError(f"No transcript found for meeting {meeting_id}")
 
-        # Get RAG context
-        context = await _get_rag_context(session, mid, meeting.project_id)
+            context = await _get_rag_context(session, mid, meeting.project_id)
 
-        # Build prompt
-        user_message = f"## Meeting: {meeting.title}\n\n"
-        if context:
-            user_message += f"## Previous Context from this project:\n{context}\n\n"
-        user_message += f"## Transcript:\n{transcript_text}"
+            anthropic_key = await get_platform_key(session, "anthropic")
+            claude = anthropic.AsyncAnthropic(api_key=anthropic_key)
 
-        # Call Claude
-        response = await claude.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4096,
-            system=NOTES_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
-        )
+            user_message = f"## Meeting: {meeting.title}\n\n"
+            if context:
+                user_message += f"## Previous Context from this project:\n{context}\n\n"
+            user_message += f"## Transcript:\n{transcript_text}"
 
-        # Parse response
-        response_text = response.content[0].text
-        # Try to extract JSON from response
-        try:
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0]
-            notes_data = json.loads(response_text)
-        except json.JSONDecodeError:
-            notes_data = {
-                "executive_summary": response_text[:500],
-                "full_notes_markdown": response_text,
-            }
-
-        generation_time_ms = int((time.time() - start) * 1000)
-
-        # Get current version number
-        result = await session.execute(
-            select(MeetingNote)
-            .where(MeetingNote.meeting_id == mid)
-            .order_by(MeetingNote.version.desc())
-            .limit(1)
-        )
-        latest = result.scalar_one_or_none()
-        version = (latest.version + 1) if latest else 1
-
-        # Save notes
-        note = MeetingNote(
-            meeting_id=mid,
-            version=version,
-            executive_summary=notes_data.get("executive_summary", ""),
-            key_points=notes_data.get("key_points"),
-            decisions=notes_data.get("decisions"),
-            action_items=notes_data.get("action_items"),
-            open_questions=notes_data.get("open_questions"),
-            topics_discussed=notes_data.get("topics_discussed"),
-            full_notes_markdown=notes_data.get("full_notes_markdown", ""),
-            context_chunks_used=10 if context else 0,
-            generation_time_ms=generation_time_ms,
-        )
-        session.add(note)
-
-        # Create tasks from action items
-        action_items = notes_data.get("action_items", [])
-        for item in action_items:
-            title = item.get("item", "") or item.get("task", "") or "Untitled task"
-
-            priority_str = (item.get("priority", "medium") or "medium").lower()
-            try:
-                priority = TaskPriority(priority_str)
-            except ValueError:
-                priority = TaskPriority.MEDIUM
-
-            due = _parse_due_date(item.get("due_date") or item.get("due"))
-
-            task = Task(
-                title=title[:500],
-                description=title,
-                priority=priority,
-                project_id=meeting.project_id,
-                source_meeting_id=mid,
-                created_by_id=meeting.created_by_id,
-                status=TaskStatus.OPEN,
-                due_date=due,
+            response = await claude.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=4096,
+                system=NOTES_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_message}],
             )
-            session.add(task)
 
-        # Update meeting status
-        meeting.status = MeetingStatus.COMPLETED
-        await session.commit()
+            response_text = response.content[0].text
+            try:
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[1].split("```")[0]
+                notes_data = json.loads(response_text)
+            except json.JSONDecodeError:
+                notes_data = {
+                    "executive_summary": response_text[:500],
+                    "full_notes_markdown": response_text,
+                }
 
-        return {"note_id": str(note.id), "version": version}
+            generation_time_ms = int((time.time() - start) * 1000)
+
+            result = await session.execute(
+                select(MeetingNote)
+                .where(MeetingNote.meeting_id == mid)
+                .order_by(MeetingNote.version.desc())
+                .limit(1)
+            )
+            latest = result.scalar_one_or_none()
+            version = (latest.version + 1) if latest else 1
+
+            note = MeetingNote(
+                meeting_id=mid,
+                version=version,
+                executive_summary=notes_data.get("executive_summary", ""),
+                key_points=notes_data.get("key_points"),
+                decisions=notes_data.get("decisions"),
+                action_items=notes_data.get("action_items"),
+                open_questions=notes_data.get("open_questions"),
+                topics_discussed=notes_data.get("topics_discussed"),
+                full_notes_markdown=notes_data.get("full_notes_markdown", ""),
+                context_chunks_used=10 if context else 0,
+                generation_time_ms=generation_time_ms,
+            )
+            session.add(note)
+
+            action_items = notes_data.get("action_items", [])
+            for item in action_items:
+                title = item.get("item", "") or item.get("task", "") or "Untitled task"
+                priority_str = (item.get("priority", "medium") or "medium").lower()
+                try:
+                    priority = TaskPriority(priority_str)
+                except ValueError:
+                    priority = TaskPriority.MEDIUM
+                due = _parse_due_date(item.get("due_date") or item.get("due"))
+                task = Task(
+                    title=title[:500],
+                    description=title,
+                    priority=priority,
+                    project_id=meeting.project_id,
+                    source_meeting_id=mid,
+                    created_by_id=meeting.created_by_id,
+                    status=TaskStatus.OPEN,
+                    due_date=due,
+                )
+                session.add(task)
+
+            meeting.status = MeetingStatus.COMPLETED
+            await session.commit()
+
+            try:
+                await check_and_deduct_credits(
+                    session,
+                    user_id=meeting.created_by_id,
+                    cost=CREDIT_COSTS["note_generation"],
+                    operation="note_generation",
+                    provider="anthropic",
+                    meeting_id=mid,
+                    duration_ms=generation_time_ms,
+                )
+                await session.commit()
+            except InsufficientCreditsError:
+                logger.warning(
+                    "Insufficient credits for user %s (meeting %s) — "
+                    "note_generation deduction skipped",
+                    meeting.created_by_id, meeting_id,
+                )
+
+            return {"note_id": str(note.id), "version": version}
+    finally:
+        await eng.dispose()
 
 
 @app.task(name="ai_worker.generate_meeting_notes", bind=True, max_retries=3)

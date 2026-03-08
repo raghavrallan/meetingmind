@@ -74,7 +74,7 @@ export default function MeetingsPage() {
 }
 
 function MeetingsContent() {
-  const { token, loading: authLoading } = useAuth();
+  const { loading: authLoading } = useAuth();
   const searchParams = useSearchParams();
   const urlSearch = searchParams.get("search") || "";
 
@@ -90,15 +90,15 @@ function MeetingsContent() {
   }, [urlSearch]);
 
   useEffect(() => {
-    if (!token) return;
+    if (authLoading) return;
 
     async function fetchData() {
       try {
         const params: { search?: string } = {};
         if (searchQuery) params.search = searchQuery;
         const [m, p] = await Promise.all([
-          api.meetings.list(token, params),
-          api.projects.list(token),
+          api.meetings.list(params),
+          api.projects.list(),
         ]);
         setMeetings(m);
         setProjects(p);
@@ -110,7 +110,7 @@ function MeetingsContent() {
     }
 
     fetchData();
-  }, [token, searchQuery]);
+  }, [authLoading, searchQuery]);
 
   if (authLoading || loading) {
     return (

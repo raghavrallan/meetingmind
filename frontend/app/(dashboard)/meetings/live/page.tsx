@@ -12,10 +12,34 @@ import {
   Wifi,
   WifiOff,
   Monitor,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+const LANGUAGES = [
+  { value: "multi", label: "Auto-detect (Multilingual)", desc: "Hindi, English, Punjabi & more" },
+  { value: "hi", label: "Hindi", desc: "हिन्दी" },
+  { value: "en-IN", label: "English (India)", desc: "Indian accent optimized" },
+  { value: "en", label: "English (US/UK)", desc: "General English" },
+  { value: "pa", label: "Punjabi", desc: "ਪੰਜਾਬੀ" },
+  { value: "es", label: "Spanish", desc: "Español" },
+  { value: "fr", label: "French", desc: "Français" },
+  { value: "de", label: "German", desc: "Deutsch" },
+  { value: "ja", label: "Japanese", desc: "日本語" },
+  { value: "zh", label: "Chinese", desc: "中文" },
+  { value: "ko", label: "Korean", desc: "한국어" },
+  { value: "pt", label: "Portuguese", desc: "Português" },
+  { value: "ar", label: "Arabic", desc: "العربية" },
+] as const;
 import { cn, formatDuration, speakerColor } from "@/lib/utils";
 import { useMeetingStore } from "@/lib/stores/meeting";
 import { useAuth } from "@/lib/hooks/use-auth";
@@ -51,7 +75,7 @@ function Waveform({ micLevel, systemLevel }: { micLevel: number; systemLevel: nu
 
 export default function LiveMeetingPage() {
   const router = useRouter();
-  const { token } = useAuth();
+  const { isAuthenticated } = useAuth();
   const {
     isRecording,
     duration,
@@ -73,13 +97,17 @@ export default function LiveMeetingPage() {
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedLanguage, setSelectedLanguage] = useState("multi");
   const meetingIdRef = useRef<string | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
 
+  const currentMeetingId = useMeetingStore((s) => s.currentMeetingId);
+
   const { sendAudio, sendStop, disconnect, isConnected } = useWebSocket({
-    meetingId: useMeetingStore.getState().currentMeetingId,
-    token,
+    meetingId: currentMeetingId,
     role: "recorder",
+    language: selectedLanguage,
+    channels: 1,
     enabled: isRecording,
   });
 
@@ -108,34 +136,49 @@ export default function LiveMeetingPage() {
     setHasSystemAudio(captureHasSystem);
   }, [captureHasSystem, setHasSystemAudio]);
 
+  // Start audio capture once WebSocket is connected
+  const hasStartedCaptureRef = useRef(false);
+  useEffect(() => {
+    if (isConnected && isRecording && !hasStartedCaptureRef.current) {
+      hasStartedCaptureRef.current = true;
+      startCapture().catch((err) => {
+        setError(`Audio capture failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+    if (!isRecording) {
+      hasStartedCaptureRef.current = false;
+    }
+  }, [isConnected, isRecording, startCapture]);
+
   const handleStart = useCallback(async () => {
-    if (!token || isStarting) return;
+    if (!isAuthenticated || isStarting) return;
     setIsStarting(true);
     setError(null);
 
     try {
-      // 1. Create meeting
+      // 1. Create meeting with selected language
       const now = new Date();
       const title = `Meeting ${now.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
-      const meeting = await api.meetings.create(token, { title });
+      const meeting = await api.meetings.create({
+        title,
+        language: selectedLanguage,
+      });
       meetingIdRef.current = meeting.id;
 
       // 2. Start meeting on backend (sets status RECORDING)
-      await api.meetings.start(token, meeting.id);
+      await api.meetings.start(meeting.id);
 
       // 3. Start recording in Zustand (triggers WebSocket connect)
+      // Audio capture starts automatically once WebSocket is connected (see effect above)
       startRecording(meeting.id);
       setAudioSource("browser");
-
-      // 4. Start audio capture (triggers browser permission dialogs)
-      await startCapture();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start recording");
       reset();
     } finally {
       setIsStarting(false);
     }
-  }, [token, isStarting, startRecording, setAudioSource, startCapture, reset]);
+  }, [isAuthenticated, isStarting, selectedLanguage, startRecording, setAudioSource, reset]);
 
   const handleStop = useCallback(async () => {
     if (isStopping) return;
@@ -153,8 +196,8 @@ export default function LiveMeetingPage() {
 
       // 4. Stop meeting on backend (sets PROCESSING, enqueues Celery)
       const meetingId = meetingIdRef.current;
-      if (token && meetingId) {
-        await api.meetings.stop(token, meetingId);
+      if (meetingId) {
+        await api.meetings.stop(meetingId);
       }
 
       // 5. Update Zustand
@@ -169,7 +212,7 @@ export default function LiveMeetingPage() {
     } finally {
       setIsStopping(false);
     }
-  }, [isStopping, stopCapture, sendStop, disconnect, token, stopRecording, router]);
+  }, [isStopping, stopCapture, sendStop, disconnect, stopRecording, router]);
 
   const handleMuteToggle = useCallback(() => {
     const newMuted = !isMicMuted;
@@ -242,6 +285,49 @@ export default function LiveMeetingPage() {
           </div>
         </div>
       </div>
+
+      {/* Language selector (before recording starts) */}
+      {!isRecording && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <Globe className="h-5 w-5 text-muted-foreground shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-medium">Transcription Language</p>
+                <p className="text-xs text-muted-foreground">
+                  Select the language spoken in this meeting. Auto-detect works for Hindi, Hinglish, English, Punjabi, and more.
+                </p>
+              </div>
+              <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
+                <SelectTrigger className="w-[220px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LANGUAGES.map((lang) => (
+                    <SelectItem key={lang.value} value={lang.value}>
+                      <div className="flex items-center gap-2">
+                        <span>{lang.label}</span>
+                        <span className="text-xs text-muted-foreground">{lang.desc}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Active language indicator during recording */}
+      {isRecording && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground px-1">
+          <Globe className="h-3.5 w-3.5" />
+          <span>
+            {LANGUAGES.find((l) => l.value === selectedLanguage)?.label || "Auto-detect"}
+            {selectedLanguage === "multi" && " — Hindi, English, Punjabi & more"}
+          </span>
+        </div>
+      )}
 
       {/* Error message */}
       {error && (

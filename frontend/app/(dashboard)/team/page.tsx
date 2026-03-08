@@ -11,16 +11,16 @@ import { useAuth } from "@/lib/hooks/use-auth";
 import { api, type TeamMember } from "@/lib/api";
 
 export default function TeamPage() {
-  const { token, loading: authLoading } = useAuth();
+  const { loading: authLoading } = useAuth();
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!token) return;
+    if (authLoading) return;
 
     async function fetchData() {
       try {
-        const members = await api.team.list(token);
+        const members = await api.team.list();
         setTeamMembers(members);
       } catch (err) {
         console.error("Failed to fetch team:", err);
@@ -30,7 +30,7 @@ export default function TeamPage() {
     }
 
     fetchData();
-  }, [token]);
+  }, [authLoading]);
 
   if (authLoading || loading) {
     return (

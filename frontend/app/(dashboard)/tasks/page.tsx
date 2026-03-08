@@ -53,7 +53,7 @@ function getPriorityBadge(priority: string) {
 }
 
 export default function TasksPage() {
-  const { token, loading: authLoading } = useAuth();
+  const { loading: authLoading } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projectList, setProjectList] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,13 +66,13 @@ export default function TasksPage() {
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!token) return;
+    if (authLoading) return;
 
     async function fetchData() {
       try {
         const [board, projects] = await Promise.all([
-          api.tasks.board(token).catch(() => null),
-          api.projects.list(token).catch(() => []),
+          api.tasks.board().catch(() => null),
+          api.projects.list().catch(() => []),
         ]);
         setProjectList(projects);
         if (board) {
@@ -84,7 +84,7 @@ export default function TasksPage() {
           ];
           setTasks(allTasks);
         } else {
-          const list = await api.tasks.list(token);
+          const list = await api.tasks.list();
           setTasks(list);
         }
       } catch (err) {
@@ -95,7 +95,7 @@ export default function TasksPage() {
     }
 
     fetchData();
-  }, [token]);
+  }, [authLoading]);
 
   const projectMap = Object.fromEntries(projectList.map((p) => [p.id, p.name]));
   const getProjectName = (task: Task) => task.project_id ? projectMap[task.project_id] || null : null;
@@ -127,7 +127,7 @@ export default function TasksPage() {
 
   const handleDrop = useCallback(
     async (status: string) => {
-      if (!draggedTaskId || !token) return;
+      if (!draggedTaskId) return;
       // Optimistic update
       setTasks((prev) =>
         prev.map((task) =>
@@ -137,18 +137,18 @@ export default function TasksPage() {
       setDraggedTaskId(null);
       // API call
       try {
-        await api.tasks.update(token, draggedTaskId, { status });
+        await api.tasks.update(draggedTaskId, { status });
       } catch (err) {
         console.error("Failed to update task status:", err);
       }
     },
-    [draggedTaskId, token]
+    [draggedTaskId]
   );
 
   const handleCreateTask = async () => {
-    if (!newTaskTitle.trim() || !token) return;
+    if (!newTaskTitle.trim()) return;
     try {
-      const created = await api.tasks.create(token, {
+      const created = await api.tasks.create({
         title: newTaskTitle,
         priority: newTaskPriority as Task["priority"],
         status: "open",

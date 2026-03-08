@@ -6,22 +6,34 @@ import openai
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.config import get_settings
+from shared.database import async_session
 from shared.models import MeetingEmbedding, Meeting
-
-settings = get_settings()
-
-# Initialize async OpenAI client
-openai_client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+from shared.platform_keys import get_platform_key
 
 
-async def get_embedding(text_input: str) -> list[float]:
+async def get_embedding(text_input: str, db: AsyncSession | None = None) -> list[float]:
     """Generate an embedding vector for the given text using OpenAI text-embedding-3-small."""
-    response = await openai_client.embeddings.create(
-        model="text-embedding-3-small",
-        input=text_input,
-    )
-    return response.data[0].embedding
+    if db is not None:
+        api_key = await get_platform_key(db, "openai")
+        if not api_key:
+            raise RuntimeError("OpenAI API key not configured")
+        client = openai.AsyncOpenAI(api_key=api_key)
+        response = await client.embeddings.create(
+            model="text-embedding-3-small",
+            input=text_input,
+        )
+        return response.data[0].embedding
+
+    async with async_session() as session:
+        api_key = await get_platform_key(session, "openai")
+        if not api_key:
+            raise RuntimeError("OpenAI API key not configured")
+        client = openai.AsyncOpenAI(api_key=api_key)
+        response = await client.embeddings.create(
+            model="text-embedding-3-small",
+            input=text_input,
+        )
+        return response.data[0].embedding
 
 
 async def search_similar(
@@ -116,7 +128,7 @@ async def build_context(
     query_text = transcript.full_text[:2000]
 
     try:
-        query_embedding = await get_embedding(query_text)
+        query_embedding = await get_embedding(query_text, db=db)
     except Exception:
         return "No prior context available (embedding generation failed)."
 

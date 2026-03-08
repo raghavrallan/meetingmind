@@ -6,19 +6,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.auth import get_current_user
-from shared.config import get_settings
+from shared.credits import check_and_deduct_credits, CREDIT_COSTS, InsufficientCreditsError
 from shared.database import get_db
 from shared.models import Meeting, MeetingParticipant, Transcript, MeetingNote
+from shared.platform_keys import get_platform_key
 
 from ..models import QueryRequest, QueryResponse, RAGContext
 from ..prompts import RAG_QUERY_PROMPT, PRE_MEETING_BRIEF_PROMPT
 from ..rag import get_embedding, search_similar, build_context
 
 router = APIRouter(prefix="/queries", tags=["queries"])
-settings = get_settings()
-
-# Initialize async Anthropic client
-anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 MODEL_NAME = "claude-sonnet-4-20250514"
 
@@ -37,7 +34,7 @@ async def query_meetings(
     """
     # Generate embedding for the question
     try:
-        question_embedding = await get_embedding(body.question)
+        question_embedding = await get_embedding(body.question, db=db)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -82,6 +79,32 @@ async def query_meetings(
 
     context_str = "\n\n---\n\n".join(context_parts)
 
+    # Deduct credits for RAG query
+    user_id = UUID(current_user["sub"])
+    try:
+        await check_and_deduct_credits(
+            db,
+            user_id=user_id,
+            cost=CREDIT_COSTS["rag_query"],
+            operation="rag_query",
+            provider="anthropic",
+            description="RAG query",
+        )
+    except InsufficientCreditsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=str(e),
+        )
+
+    # Get platform API key for Anthropic
+    api_key = await get_platform_key(db, "anthropic")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Anthropic API key not configured",
+        )
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+
     # Build the prompt
     prompt = RAG_QUERY_PROMPT.format(
         context=context_str,
@@ -90,7 +113,7 @@ async def query_meetings(
 
     # Call Claude
     try:
-        response = await anthropic_client.messages.create(
+        response = await client.messages.create(
             model=MODEL_NAME,
             max_tokens=2048,
             messages=[
@@ -151,7 +174,7 @@ async def generate_pre_brief(
     # If no transcript exists yet for this meeting (pre-meeting), use the title for context search
     if context == "No prior context available." and meeting.project_id:
         try:
-            title_embedding = await get_embedding(meeting.title)
+            title_embedding = await get_embedding(meeting.title, db=db)
             similar_items = await search_similar(
                 db=db,
                 query_embedding=title_embedding,
@@ -170,6 +193,33 @@ async def generate_pre_brief(
         except Exception:
             pass  # Fall through with default context
 
+    # Deduct credits for pre-meeting brief
+    user_id = UUID(current_user["sub"])
+    try:
+        await check_and_deduct_credits(
+            db,
+            user_id=user_id,
+            cost=CREDIT_COSTS["pre_meeting_brief"],
+            operation="pre_meeting_brief",
+            provider="anthropic",
+            meeting_id=meeting_id,
+            description="Pre-meeting brief generation",
+        )
+    except InsufficientCreditsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=str(e),
+        )
+
+    # Get platform API key for Anthropic
+    api_key = await get_platform_key(db, "anthropic")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Anthropic API key not configured",
+        )
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+
     # Build the prompt
     prompt = PRE_MEETING_BRIEF_PROMPT.format(
         meeting_title=meeting.title,
@@ -179,7 +229,7 @@ async def generate_pre_brief(
 
     # Call Claude
     try:
-        response = await anthropic_client.messages.create(
+        response = await client.messages.create(
             model=MODEL_NAME,
             max_tokens=2048,
             messages=[
@@ -200,7 +250,7 @@ async def generate_pre_brief(
     if context != "No prior context available.":
         # Parse out meeting references from context for source attribution
         try:
-            title_embedding = await get_embedding(meeting.title)
+            title_embedding = await get_embedding(meeting.title, db=db)
             similar_items = await search_similar(
                 db=db,
                 query_embedding=title_embedding,

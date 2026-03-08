@@ -6,6 +6,9 @@ from shared.models.note import MeetingNote
 from shared.models.task import Task
 from shared.models.embedding import MeetingEmbedding
 from shared.models.user_setting import UserSetting
+from shared.models.platform_key import PlatformKey
+from shared.models.credit_transaction import CreditTransaction
+from shared.models.api_usage import ApiUsageLog
 
 __all__ = [
     "User",
@@ -19,4 +22,7 @@ __all__ = [
     "Task",
     "MeetingEmbedding",
     "UserSetting",
+    "PlatformKey",
+    "CreditTransaction",
+    "ApiUsageLog",
 ]

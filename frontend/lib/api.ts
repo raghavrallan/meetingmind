@@ -4,7 +4,6 @@ interface RequestOptions {
   method?: string;
   body?: unknown;
   headers?: Record<string, string>;
-  token?: string;
 }
 
 class ApiError extends Error {
@@ -22,14 +21,14 @@ async function request<T>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<T> {
-  const { method = "GET", body, headers = {}, token } = options;
+  const { method = "GET", body, headers = {} } = options;
 
   const config: RequestInit = {
     method,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...headers,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
   };
 
@@ -166,118 +165,137 @@ export interface DashboardStats {
   hours_recorded: number;
 }
 
-// --- API Client ---
+// --- API Client (cookie-based, no token passing) ---
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const api: any = {
-  // Auth
-  auth: {
-    me: (token: string) => request<{ user: TeamMember }>("/api/v1/auth/me", { token }),
-    deviceLogin: () =>
-      request<{ access_token: string; user: { id: string; email: string; name: string } }>("/api/v1/auth/device-login", { method: "POST", body: { device_name: "Desktop Agent" } }),
-  },
-
   // Meetings
   meetings: {
-    list: async (token: string, params?: { project_id?: string; search?: string; from_date?: string; to_date?: string }) => {
+    list: async (params?: { project_id?: string; search?: string; from_date?: string; to_date?: string }) => {
       const searchParams = new URLSearchParams();
       if (params?.project_id) searchParams.set("project_id", params.project_id);
       if (params?.search) searchParams.set("search", params.search);
       if (params?.from_date) searchParams.set("from_date", params.from_date);
       if (params?.to_date) searchParams.set("to_date", params.to_date);
       const query = searchParams.toString();
-      const data = await request<{ meetings: Meeting[]; total: number }>(`/api/v1/meetings/${query ? `?${query}` : ""}`, { token });
+      const data = await request<{ meetings: Meeting[]; total: number }>(`/api/v1/meetings/${query ? `?${query}` : ""}`);
       return data.meetings;
     },
-    get: (token: string, id: string) =>
-      request<Meeting>(`/api/v1/meetings/${id}`, { token }),
-    create: (token: string, data: { title: string; project_id?: string }) =>
-      request<Meeting>("/api/v1/meetings/", { method: "POST", body: data, token }),
-    delete: (token: string, id: string) =>
-      request<void>(`/api/v1/meetings/${id}`, { method: "DELETE", token }),
-    transcript: (token: string, id: string) =>
-      request<TranscriptUtterance[]>(`/api/v1/meetings/${id}/transcript/`, { token }),
-    notes: (token: string, id: string) =>
-      request<MeetingNotes>(`/api/v1/meetings/${id}/notes/`, { token }),
-    generateNotes: (token: string, id: string) =>
-      request<MeetingNotes>(`/api/v1/meetings/${id}/notes/generate/`, { method: "POST", token }),
-    audioUrl: (id: string) => `${API_BASE_URL}/api/v1/meetings/${id}/audio/`,
-    start: (token: string, id: string) =>
-      request<Meeting>(`/api/v1/meetings/${id}/start`, { method: "POST", token }),
-    stop: (token: string, id: string) =>
-      request<Meeting>(`/api/v1/meetings/${id}/stop`, { method: "POST", token }),
-    wsUrl: (meetingId: string, token: string) => {
+    get: (id: string) =>
+      request<Meeting>(`/api/v1/meetings/${id}`),
+    create: (data: { title: string; project_id?: string; language?: string }) =>
+      request<Meeting>("/api/v1/meetings/", { method: "POST", body: data }),
+    delete: (id: string) =>
+      request<void>(`/api/v1/meetings/${id}`, { method: "DELETE" }),
+    transcript: async (id: string) => {
+      const data = await request<{ utterances: { id: string; speaker_index: number; speaker_name: string | null; text: string; start_time: number; end_time: number; confidence: number }[] }>(`/api/v1/transcripts/meeting/${id}`);
+      return data.utterances.map((u) => ({
+        id: u.id,
+        speaker: u.speaker_name || `Speaker ${u.speaker_index + 1}`,
+        speaker_index: u.speaker_index,
+        text: u.text,
+        start_time: u.start_time,
+        end_time: u.end_time,
+        confidence: u.confidence,
+      })) as TranscriptUtterance[];
+    },
+    notes: async (id: string) => {
+      const data = await request<{ executive_summary: string; decisions: unknown[] | null; action_items: unknown[] | null; full_notes_markdown: string; key_points: unknown[] | null }>(`/api/v1/notes/meeting/${id}`);
+      return {
+        summary: data.executive_summary || "",
+        decisions: (data.decisions || []).map((d: unknown) => typeof d === "string" ? d : (d as Record<string, string>)?.decision || JSON.stringify(d)),
+        action_items: (data.action_items || []).map((a: unknown, i: number) => {
+          const item = a as Record<string, unknown>;
+          return {
+            id: String(i),
+            text: (item.item || item.task || item.text || "") as string,
+            assignee: (item.assignee || null) as string | null,
+            due_date: (item.due_date || item.due || null) as string | null,
+            completed: false,
+          };
+        }),
+        full_notes: data.full_notes_markdown || "",
+      } as MeetingNotes;
+    },
+    generateNotes: (id: string) =>
+      request<MeetingNotes>(`/api/v1/notes/meeting/${id}/regenerate`, { method: "POST" }),
+    audioUrl: (id: string) => `${API_BASE_URL}/api/v1/meetings/${id}/audio`,
+    start: (id: string) =>
+      request<Meeting>(`/api/v1/meetings/${id}/start`, { method: "POST" }),
+    stop: (id: string) =>
+      request<Meeting>(`/api/v1/meetings/${id}/stop`, { method: "POST" }),
+    wsUrl: (meetingId: string) => {
       const base = API_BASE_URL.replace(/^http/, "ws");
-      return `${base}/api/v1/meetings/${meetingId}/ws?token=${encodeURIComponent(token)}`;
+      return `${base}/api/v1/meetings/${meetingId}/ws`;
     },
   },
 
   // Projects
   projects: {
-    list: async (token: string) => {
-      const data = await request<{ projects: Project[]; total: number }>("/api/v1/projects/", { token });
+    list: async () => {
+      const data = await request<{ projects: Project[]; total: number }>("/api/v1/projects/");
       return data.projects;
     },
-    get: (token: string, id: string) =>
-      request<Project>(`/api/v1/projects/${id}`, { token }),
-    create: (token: string, data: { name: string; description?: string; color?: string }) =>
-      request<Project>("/api/v1/projects/", { method: "POST", body: data, token }),
-    update: (token: string, id: string, data: Partial<Project>) =>
-      request<Project>(`/api/v1/projects/${id}`, { method: "PATCH", body: data, token }),
-    delete: (token: string, id: string) =>
-      request<void>(`/api/v1/projects/${id}`, { method: "DELETE", token }),
-    meetings: (token: string, id: string) =>
-      request<Meeting[]>(`/api/v1/projects/${id}/meetings/`, { token }),
-    members: (token: string, id: string) =>
-      request<ProjectMember[]>(`/api/v1/projects/${id}/members`, { token }),
-    brief: (token: string, id: string) =>
-      request<{ brief: string }>(`/api/v1/projects/${id}/brief/`, { token }),
-    regenerateBrief: (token: string, id: string) =>
-      request<{ brief: string }>(`/api/v1/projects/${id}/brief/regenerate/`, { method: "POST", token }),
+    get: (id: string) =>
+      request<Project>(`/api/v1/projects/${id}`),
+    create: (data: { name: string; description?: string; color?: string }) =>
+      request<Project>("/api/v1/projects/", { method: "POST", body: data }),
+    update: (id: string, data: Partial<Project>) =>
+      request<Project>(`/api/v1/projects/${id}`, { method: "PATCH", body: data }),
+    delete: (id: string) =>
+      request<void>(`/api/v1/projects/${id}`, { method: "DELETE" }),
+    meetings: (id: string) =>
+      request<Meeting[]>(`/api/v1/projects/${id}/meetings/`),
+    members: (id: string) =>
+      request<ProjectMember[]>(`/api/v1/projects/${id}/members`),
+    brief: (id: string) =>
+      request<{ brief: string }>(`/api/v1/projects/${id}/brief/`),
+    regenerateBrief: (id: string) =>
+      request<{ brief: string }>(`/api/v1/projects/${id}/brief/regenerate/`, { method: "POST" }),
   },
 
   // Tasks
   tasks: {
-    list: async (token: string, params?: { project_id?: string; assignee_id?: string; status?: string; priority?: string }) => {
+    list: async (params?: { project_id?: string; assignee_id?: string; status?: string; priority?: string }) => {
       const searchParams = new URLSearchParams();
       if (params?.project_id) searchParams.set("project_id", params.project_id);
       if (params?.assignee_id) searchParams.set("assignee_id", params.assignee_id);
       if (params?.status) searchParams.set("status", params.status);
       if (params?.priority) searchParams.set("priority", params.priority);
       const query = searchParams.toString();
-      const data = await request<{ tasks: Task[]; total: number }>(`/api/v1/tasks/${query ? `?${query}` : ""}`, { token });
+      const data = await request<{ tasks: Task[]; total: number }>(`/api/v1/tasks/${query ? `?${query}` : ""}`);
       return data.tasks;
     },
-    board: (token: string) =>
-      request<{ open: Task[]; in_progress: Task[]; completed: Task[]; cancelled: Task[] }>("/api/v1/tasks/board/", { token }),
-    get: (token: string, id: string) =>
-      request<Task>(`/api/v1/tasks/${id}`, { token }),
-    create: (token: string, data: Partial<Task>) =>
-      request<Task>("/api/v1/tasks/", { method: "POST", body: data, token }),
-    update: (token: string, id: string, data: Partial<Task>) =>
-      request<Task>(`/api/v1/tasks/${id}`, { method: "PATCH", body: data, token }),
-    delete: (token: string, id: string) =>
-      request<void>(`/api/v1/tasks/${id}`, { method: "DELETE", token }),
+    board: () =>
+      request<{ open: Task[]; in_progress: Task[]; completed: Task[]; cancelled: Task[] }>("/api/v1/tasks/board/"),
+    get: (id: string) =>
+      request<Task>(`/api/v1/tasks/${id}`),
+    create: (data: Partial<Task>) =>
+      request<Task>("/api/v1/tasks/", { method: "POST", body: data }),
+    update: (id: string, data: Partial<Task>) =>
+      request<Task>(`/api/v1/tasks/${id}`, { method: "PATCH", body: data }),
+    delete: (id: string) =>
+      request<void>(`/api/v1/tasks/${id}`, { method: "DELETE" }),
   },
 
   // Team
   team: {
-    list: (token: string) =>
-      request<TeamMember[]>("/api/v1/team/", { token }),
-    get: (token: string, id: string) =>
-      request<TeamMember>(`/api/v1/team/${id}/profile`, { token }),
-    workload: (token: string, id: string) =>
-      request<{ open_tasks: number; completed_tasks: number; meetings_attended: number }>(`/api/v1/team/${id}/workload`, { token }),
+    list: () =>
+      request<TeamMember[]>("/api/v1/team/"),
+    get: (id: string) =>
+      request<TeamMember>(`/api/v1/team/${id}/profile`),
+    workload: (id: string) =>
+      request<{ open_tasks: number; completed_tasks: number; meetings_attended: number }>(`/api/v1/team/${id}/workload`),
   },
 
   // Dashboard
   dashboard: {
-    stats: (token: string) =>
-      request<DashboardStats>("/api/v1/dashboard/stats/", { token }),
-    recentMeetings: (token: string) =>
-      request<Meeting[]>("/api/v1/dashboard/recent-meetings/", { token }),
-    upcomingMeetings: (token: string) =>
-      request<Meeting[]>("/api/v1/dashboard/upcoming-meetings/", { token }),
+    stats: () =>
+      request<DashboardStats>("/api/v1/dashboard/stats/"),
+    recentMeetings: () =>
+      request<Meeting[]>("/api/v1/dashboard/recent-meetings/"),
+    upcomingMeetings: () =>
+      request<Meeting[]>("/api/v1/dashboard/upcoming-meetings/"),
   },
 };
 
@@ -295,35 +313,38 @@ export interface SettingsListResponse {
   settings: UserSettingResponse[];
 }
 
-// Extend the api object with settings methods
 api.settings = {
-  list: (token: string) =>
-    request<SettingsListResponse>("/api/v1/settings/", { token }),
-  upsert: (token: string, settings: { key: string; value: string }[]) =>
+  list: () =>
+    request<SettingsListResponse>("/api/v1/settings/"),
+  upsert: (settings: { key: string; value: string }[]) =>
     request<{ updated: string[]; count: number }>("/api/v1/settings/", {
       method: "PUT",
       body: { settings },
-      token,
     }),
-  get: (token: string, key: string) =>
-    request<UserSettingResponse>(`/api/v1/settings/${key}`, { token }),
-  delete: (token: string, key: string) =>
+  get: (key: string) =>
+    request<UserSettingResponse>(`/api/v1/settings/${key}`),
+  delete: (key: string) =>
     request<{ deleted: string }>(`/api/v1/settings/${key}`, {
       method: "DELETE",
-      token,
     }),
 };
 
 // OAuth
 api.oauth = {
-  googleUrl: (token: string, redirectUri: string) =>
-    request<{ url: string }>(`/api/v1/auth/oauth/google/url?redirect_uri=${encodeURIComponent(redirectUri)}`, { token }),
-  microsoftUrl: (token: string, redirectUri: string) =>
-    request<{ url: string }>(`/api/v1/auth/oauth/microsoft/url?redirect_uri=${encodeURIComponent(redirectUri)}`, { token }),
+  googleUrl: (redirectUri: string) =>
+    request<{ url: string }>(`/api/v1/auth/oauth/google?redirect_uri=${encodeURIComponent(redirectUri)}`),
   googleCallback: (code: string, redirectUri: string) =>
-    request<{ access_token: string }>("/api/v1/auth/login/google", { method: "POST", body: { code, redirect_uri: redirectUri } }),
+    request<{ access_token: string }>("/api/v1/auth/oauth/google/callback", {
+      method: "POST",
+      body: { code, redirect_uri: redirectUri },
+    }),
+  microsoftUrl: (redirectUri: string) =>
+    request<{ url: string }>(`/api/v1/auth/oauth/microsoft?redirect_uri=${encodeURIComponent(redirectUri)}`),
   microsoftCallback: (code: string, redirectUri: string) =>
-    request<{ access_token: string }>("/api/v1/auth/login/microsoft", { method: "POST", body: { code, redirect_uri: redirectUri } }),
+    request<{ success: boolean }>("/api/v1/auth/oauth/microsoft/callback", {
+      method: "POST",
+      body: { code, redirect_uri: redirectUri },
+    }),
 };
 
 // Helpers for meeting data access

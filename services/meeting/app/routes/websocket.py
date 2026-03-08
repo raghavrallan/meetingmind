@@ -8,9 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.auth import verify_token
+from shared.credits import CREDIT_COSTS, InsufficientCreditsError, check_and_deduct_credits
 from shared.database import async_session
 from shared.models import Meeting, Transcript, TranscriptUtterance
 from shared.models.meeting import MeetingStatus
+from shared.platform_keys import get_platform_key
 
 from ..audio_storage import upload_audio
 from ..deepgram_client import DeepgramStreamClient
@@ -32,10 +34,22 @@ _active_transcripts: dict[UUID, UUID] = {}
 
 
 async def _authenticate_websocket(websocket: WebSocket) -> dict:
-    """Authenticate a WebSocket connection via token query param or first message."""
-    token = websocket.query_params.get("token")
+    """Authenticate a WebSocket connection. Checks (in order):
+    1. access_token cookie (browser sends cookies on same-origin WS)
+    2. ?token= query parameter (Electron / fallback)
+    3. First text message with {"token": "..."} (legacy)
+    """
+    token = None
+
+    # 1. Cookie (browser WebSocket sends cookies automatically for same-origin)
+    token = websocket.cookies.get("access_token")
+
+    # 2. Query parameter
     if not token:
-        # Try to get token from the first message
+        token = websocket.query_params.get("token")
+
+    # 3. First message fallback
+    if not token:
         try:
             first_msg = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
             data = json.loads(first_msg)
@@ -218,28 +232,73 @@ async def meeting_websocket(websocket: WebSocket, meeting_id: UUID):
     user_payload = await _authenticate_websocket(websocket)
     user_id = UUID(user_payload["sub"])
 
-    # Wait for role assignment
+    # Wait for role assignment (may also include language preference and channel count)
+    language = "multi"
+    channels = 1
     try:
         role_msg = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
         role_data = json.loads(role_msg)
         role = role_data.get("role", "viewer")
+        language = role_data.get("language", "multi")
+        channels = int(role_data.get("channels", 1))
     except (asyncio.TimeoutError, json.JSONDecodeError):
         role = "viewer"
 
-    logger.info(f"WebSocket connected: meeting={meeting_id}, user={user_id}, role={role}")
+    # If no language from client, read from the meeting record
+    if language == "multi" or not language:
+        async with async_session() as db:
+            result = await db.execute(
+                select(Meeting.language).where(Meeting.id == meeting_id)
+            )
+            meeting_lang = result.scalar_one_or_none()
+            if meeting_lang and meeting_lang != "en":
+                language = meeting_lang
+
+    logger.info(f"WebSocket connected: meeting={meeting_id}, user={user_id}, role={role}, language={language}, channels={channels}")
 
     if role == "recorder":
-        await _handle_recorder(websocket, meeting_id, user_id)
+        await _handle_recorder(websocket, meeting_id, user_id, language, channels)
     else:
         await _handle_viewer(websocket, meeting_id, user_id)
 
 
-async def _handle_recorder(websocket: WebSocket, meeting_id: UUID, user_id: UUID) -> None:
+async def _handle_recorder(websocket: WebSocket, meeting_id: UUID, user_id: UUID, language: str = "multi", channels: int = 1) -> None:
     """Handle the recording client's WebSocket connection.
 
     Receives audio chunks, forwards to Deepgram, and relays transcription
     results to all connected viewers.
     """
+    # Fetch Deepgram API key from platform vault
+    async with async_session() as db:
+        deepgram_key = await get_platform_key(db, "deepgram")
+    if not deepgram_key:
+        await websocket.send_json({
+            "type": "error",
+            "data": {"message": "Deepgram API key not configured. Contact your administrator."},
+        })
+        await websocket.close(code=4002, reason="Deepgram API key not configured")
+        return
+
+    # Pre-check credits (minimum 10 credits for 1 minute)
+    async with async_session() as db:
+        try:
+            await check_and_deduct_credits(
+                db, user_id,
+                cost=CREDIT_COSTS["transcription_minute"],
+                operation="transcription",
+                provider="deepgram",
+                meeting_id=meeting_id,
+                description="Transcription started (1 min pre-charge)",
+            )
+            await db.commit()
+        except InsufficientCreditsError as e:
+            await websocket.send_json({
+                "type": "error",
+                "data": {"message": f"Insufficient credits: need {e.required}, have {e.available}"},
+            })
+            await websocket.close(code=4003, reason="Insufficient credits")
+            return
+
     # Initialize audio buffer
     _audio_buffers[meeting_id] = bytearray()
 
@@ -265,7 +324,7 @@ async def _handle_recorder(websocket: WebSocket, meeting_id: UUID, user_id: UUID
                 _persist_utterance(meeting_id, data),
             )
 
-    deepgram_client = DeepgramStreamClient(on_transcript=on_transcript)
+    deepgram_client = DeepgramStreamClient(on_transcript=on_transcript, api_key=deepgram_key, language=language, channels=channels)
 
     try:
         async with deepgram_client:
