@@ -20,6 +20,10 @@ interface UserDetail {
   lifetime_credits: number;
   is_admin: boolean;
   is_active: boolean;
+  status: string;
+  suspended_at?: string;
+  suspended_reason?: string;
+  deleted_at?: string;
   created_at: string;
   recent_transactions: Transaction[];
   recent_usage: UsageRecord[];
@@ -50,7 +54,7 @@ export default function AdminUserDetailPage() {
   const [grantAmount, setGrantAmount] = useState("");
   const [grantDescription, setGrantDescription] = useState("");
   const [granting, setGranting] = useState(false);
-  const [toggling, setToggling] = useState(false);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   async function fetchUser() {
     try {
@@ -98,21 +102,23 @@ export default function AdminUserDetailPage() {
     }
   }
 
-  async function handleToggleAdmin() {
-    if (!user) return;
-    setToggling(true);
+  async function handleAction(action: string, body?: object) {
+    setActionLoading(action);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/admin/users/${userId}`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_admin: !user.is_admin }),
-      });
+      const res = await fetch(
+        `${API_BASE}/api/v1/admin/users/${userId}/${action}`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        }
+      );
       if (res.ok) await fetchUser();
     } catch {
       // silently fail
     } finally {
-      setToggling(false);
+      setActionLoading(null);
     }
   }
 
@@ -149,6 +155,40 @@ export default function AdminUserDetailPage() {
             <CardTitle>Profile</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            <div className="flex items-center gap-2">
+              {user.status === "active" && (
+                <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                  Active
+                </Badge>
+              )}
+              {user.status === "suspended" && (
+                <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
+                  Suspended
+                </Badge>
+              )}
+              {user.status === "deleted" && (
+                <Badge variant="destructive">Deleted</Badge>
+              )}
+            </div>
+            {user.status === "suspended" && (
+              <div className="rounded-md bg-amber-50 p-3 text-sm dark:bg-amber-950">
+                <p className="font-medium text-amber-800 dark:text-amber-200">
+                  Suspended{user.suspended_at ? ` on ${new Date(user.suspended_at).toLocaleDateString()}` : ""}
+                </p>
+                {user.suspended_reason && (
+                  <p className="mt-1 text-amber-700 dark:text-amber-300">
+                    Reason: {user.suspended_reason}
+                  </p>
+                )}
+              </div>
+            )}
+            {user.status === "deleted" && user.deleted_at && (
+              <div className="rounded-md bg-red-50 p-3 text-sm dark:bg-red-950">
+                <p className="text-red-800 dark:text-red-200">
+                  Deleted on {new Date(user.deleted_at).toLocaleDateString()}
+                </p>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Name</span>
               <span className="font-medium">{user.name}</span>
@@ -175,19 +215,87 @@ export default function AdminUserDetailPage() {
                 {new Date(user.created_at).toLocaleDateString()}
               </span>
             </div>
-            <Button
-              variant="outline"
-              className="mt-4 w-full"
-              onClick={handleToggleAdmin}
-              disabled={toggling}
-            >
-              {toggling ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Shield className="h-4 w-4" />
+
+            <div className="mt-4 space-y-2 border-t border-[hsl(var(--border))] pt-4">
+              <p className="text-sm font-medium">Actions</p>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() =>
+                  handleAction(user.is_admin ? "remove-admin" : "make-admin")
+                }
+                disabled={actionLoading !== null}
+              >
+                {actionLoading === "make-admin" || actionLoading === "remove-admin" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Shield className="h-4 w-4" />
+                )}
+                {user.is_admin ? "Remove Admin" : "Make Admin"}
+              </Button>
+
+              {user.status === "active" && (
+                <Button
+                  variant="outline"
+                  className="w-full border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950"
+                  onClick={() => {
+                    const reason = window.prompt("Reason for suspension:");
+                    if (reason !== null) handleAction("suspend", { reason });
+                  }}
+                  disabled={actionLoading !== null}
+                >
+                  {actionLoading === "suspend" && (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  )}
+                  Suspend User
+                </Button>
               )}
-              {user.is_admin ? "Remove Admin" : "Make Admin"}
-            </Button>
+
+              {user.status === "suspended" && (
+                <Button
+                  variant="outline"
+                  className="w-full border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950"
+                  onClick={() => handleAction("reactivate")}
+                  disabled={actionLoading !== null}
+                >
+                  {actionLoading === "reactivate" && (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  )}
+                  Reactivate User
+                </Button>
+              )}
+
+              {user.status !== "deleted" && (
+                <Button
+                  variant="destructive"
+                  className="w-full"
+                  onClick={() => {
+                    if (window.confirm("Are you sure you want to delete this user?"))
+                      handleAction("delete");
+                  }}
+                  disabled={actionLoading !== null}
+                >
+                  {actionLoading === "delete" && (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  )}
+                  Delete User
+                </Button>
+              )}
+
+              {user.status === "deleted" && (
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => handleAction("restore")}
+                  disabled={actionLoading !== null}
+                >
+                  {actionLoading === "restore" && (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  )}
+                  Restore User
+                </Button>
+              )}
+            </div>
           </CardContent>
         </Card>
 

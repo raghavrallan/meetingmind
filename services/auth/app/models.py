@@ -17,6 +17,8 @@ class UserResponse(BaseModel):
     credit_balance: int = 0
     lifetime_credits: int = 0
     is_admin: bool = False
+    status: str = "active"
+    suspended_reason: Optional[str] = None
     is_active: bool = True
     created_at: datetime
     updated_at: datetime

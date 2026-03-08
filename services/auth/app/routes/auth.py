@@ -292,8 +292,11 @@ async def login_email(
     if not _verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Account is deactivated")
+    if user.status == "deleted":
+        raise HTTPException(status_code=401, detail="Account not found")
+    if user.status == "suspended":
+        reason = user.suspended_reason or "Contact support for more information"
+        raise HTTPException(status_code=403, detail=f"Account suspended: {reason}")
 
     access_token = _set_auth_cookies(response, user)
 
@@ -330,9 +333,13 @@ async def refresh_token(
     user_id = UUID(payload["sub"])
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    if not user or not user.is_active:
+    if not user or user.status == "deleted":
         _clear_auth_cookies(response)
         raise HTTPException(status_code=401, detail="User not found")
+    if user.status == "suspended":
+        _clear_auth_cookies(response)
+        reason = user.suspended_reason or "Contact support for more information"
+        raise HTTPException(status_code=403, detail=f"Account suspended: {reason}")
 
     _set_auth_cookies(response, user)
     return {"user": UserResponse.model_validate(user)}

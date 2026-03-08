@@ -159,6 +159,8 @@ async def list_users(
                 "credit_balance": u.credit_balance,
                 "lifetime_credits": u.lifetime_credits,
                 "is_admin": u.is_admin,
+                "status": u.status,
+                "suspended_reason": u.suspended_reason,
                 "is_active": u.is_active,
                 "created_at": u.created_at.isoformat(),
             }
@@ -215,7 +217,11 @@ async def get_user_detail(
         "id": str(user.id), "name": user.name, "email": user.email,
         "avatar_url": user.avatar_url, "auth_provider": user.auth_provider,
         "credit_balance": user.credit_balance, "lifetime_credits": user.lifetime_credits,
-        "is_admin": user.is_admin, "is_active": user.is_active,
+        "is_admin": user.is_admin, "status": user.status,
+        "suspended_at": user.suspended_at.isoformat() if user.suspended_at else None,
+        "suspended_reason": user.suspended_reason,
+        "deleted_at": user.deleted_at.isoformat() if user.deleted_at else None,
+        "is_active": user.is_active,
         "created_at": user.created_at.isoformat(), "updated_at": user.updated_at.isoformat(),
         "meeting_count": meeting_count,
         "recent_transactions": transactions,
@@ -223,34 +229,142 @@ async def get_user_detail(
     }
 
 
-class UserUpdateRequest(BaseModel):
-    is_admin: Optional[bool] = None
-    is_active: Optional[bool] = None
+class SuspendRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
 
 
-@router.patch("/users/{user_id}")
-async def update_user(
-    user_id: UUID,
-    body: UserUpdateRequest,
-    current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    await _require_admin(current_user, db)
-
+async def _get_user_or_404(user_id: UUID, db: AsyncSession) -> User:
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    return user
 
-    if body.is_admin is not None:
-        user.is_admin = body.is_admin
-    if body.is_active is not None:
-        user.is_active = body.is_active
 
+@router.post("/users/{user_id}/suspend")
+async def suspend_user(
+    user_id: UUID,
+    body: SuspendRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Suspend (hibernate/ban) a user. They cannot log in until reactivated."""
+    await _require_admin(current_user, db)
+    user = await _get_user_or_404(user_id, db)
+
+    if user.status == "suspended":
+        raise HTTPException(status_code=409, detail="User is already suspended")
+
+    user.status = "suspended"
+    user.is_active = False
+    user.suspended_at = datetime.now(timezone.utc)
+    user.suspended_reason = body.reason
     user.updated_at = datetime.now(timezone.utc)
     await db.flush()
 
-    return {"id": str(user.id), "is_admin": user.is_admin, "is_active": user.is_active}
+    return {"id": str(user.id), "status": user.status, "suspended_reason": user.suspended_reason}
+
+
+@router.post("/users/{user_id}/reactivate")
+async def reactivate_user(
+    user_id: UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reactivate a suspended or deleted user."""
+    await _require_admin(current_user, db)
+    user = await _get_user_or_404(user_id, db)
+
+    if user.status == "active":
+        raise HTTPException(status_code=409, detail="User is already active")
+
+    user.status = "active"
+    user.is_active = True
+    user.suspended_at = None
+    user.suspended_reason = None
+    user.deleted_at = None
+    user.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    return {"id": str(user.id), "status": user.status}
+
+
+@router.post("/users/{user_id}/delete")
+async def soft_delete_user(
+    user_id: UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Soft-delete a user. Data is preserved for billing/audit. Never hard-deletes."""
+    admin = await _require_admin(current_user, db)
+    user = await _get_user_or_404(user_id, db)
+
+    if user.id == admin.id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    if user.status == "deleted":
+        raise HTTPException(status_code=409, detail="User is already deleted")
+
+    user.status = "deleted"
+    user.is_active = False
+    user.deleted_at = datetime.now(timezone.utc)
+    user.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    return {"id": str(user.id), "status": user.status}
+
+
+@router.post("/users/{user_id}/restore")
+async def restore_user(
+    user_id: UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore a soft-deleted user back to active."""
+    await _require_admin(current_user, db)
+    user = await _get_user_or_404(user_id, db)
+
+    if user.status != "deleted":
+        raise HTTPException(status_code=409, detail="User is not deleted")
+
+    user.status = "active"
+    user.is_active = True
+    user.deleted_at = None
+    user.suspended_at = None
+    user.suspended_reason = None
+    user.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    return {"id": str(user.id), "status": user.status}
+
+
+@router.post("/users/{user_id}/make-admin")
+async def make_admin(
+    user_id: UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _require_admin(current_user, db)
+    user = await _get_user_or_404(user_id, db)
+    user.is_admin = True
+    user.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+    return {"id": str(user.id), "is_admin": True}
+
+
+@router.post("/users/{user_id}/remove-admin")
+async def remove_admin(
+    user_id: UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    admin = await _require_admin(current_user, db)
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="Cannot remove your own admin rights")
+    user = await _get_user_or_404(user_id, db)
+    user.is_admin = False
+    user.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+    return {"id": str(user.id), "is_admin": False}
 
 
 # ── Usage Logs ───────────────────────────────────────────────────────
