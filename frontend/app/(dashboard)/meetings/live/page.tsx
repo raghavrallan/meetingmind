@@ -235,7 +235,7 @@ export default function LiveMeetingPage() {
             Real-time transcription and recording
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {isRecording && (
             <>
               {/* Connection status badge */}
@@ -299,7 +299,7 @@ export default function LiveMeetingPage() {
                 </p>
               </div>
               <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
-                <SelectTrigger className="w-[220px]">
+                <SelectTrigger className="w-full sm:w-[220px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

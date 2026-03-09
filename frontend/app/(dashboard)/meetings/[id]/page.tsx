@@ -245,7 +245,7 @@ export default function MeetingDetailPage() {
               </Badge>
             )}
           </div>
-          <div className="mt-1 flex items-center gap-4 text-sm text-muted-foreground">
+          <div className="mt-1 flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
             <span className="flex items-center gap-1">
               <Clock className="h-4 w-4" />
               {format(new Date(meetingDate), "MMM d, yyyy 'at' h:mm a")} -{" "}
@@ -366,7 +366,7 @@ export default function MeetingDetailPage() {
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
             <CardTitle className="text-lg">Notes</CardTitle>
             {notes && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {/* TTS Read Aloud button */}
                 {tts.isSupported && (
                   tts.isSpeaking ? (
@@ -509,7 +509,7 @@ export default function MeetingDetailPage() {
                 value={activeNotesTab}
                 onValueChange={setActiveNotesTab}
               >
-                <TabsList className="w-full">
+                <TabsList className="w-full overflow-x-auto">
                   <TabsTrigger value="summary" className="flex-1">
                     Summary
                   </TabsTrigger>
@@ -656,7 +656,7 @@ export default function MeetingDetailPage() {
       {/* Audio Player Bar — hide during live meetings */}
       {!isLive && (
         <Card className="sticky bottom-0">
-          <CardContent className="flex items-center gap-4 p-3">
+          <CardContent className="flex flex-wrap items-center gap-4 p-3">
             <div className="flex items-center gap-2">
               <Button
                 variant="ghost"

@@ -267,7 +267,7 @@ export default function DashboardPage() {
             <CardHeader>
               <CardTitle>Quick Actions</CardTitle>
             </CardHeader>
-            <CardContent className="flex gap-3">
+            <CardContent className="flex flex-col sm:flex-row gap-3">
               <Button asChild className="flex-1">
                 <Link href="/meetings/live">
                   <Mic className="mr-2 h-4 w-4" />
