@@ -104,7 +104,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       }
       wsRef.current = null;
     };
-  }, [enabled, meetingId, role]);
+  }, [enabled, meetingId, role, channels]);
 
   const sendAudio = useCallback((chunk: ArrayBuffer) => {
     const ws = wsRef.current;

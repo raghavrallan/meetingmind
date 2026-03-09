@@ -55,7 +55,6 @@ class DeepgramStreamClient:
         Keyterms boost name/vocabulary recognition accuracy by up to 90%.
         """
         is_multi = self._language == "multi"
-        use_multichannel = self._channels == 2 and not is_multi
 
         params = {
             "model": "nova-3",
@@ -69,15 +68,17 @@ class DeepgramStreamClient:
             "utterance_end_ms": "1000",
             "encoding": "linear16",
             "sample_rate": "16000",
+            "channels": str(self._channels),
             "language": self._language,
         }
 
-        if use_multichannel:
+        # Multichannel gives per-channel transcripts (e.g., mic vs system audio)
+        # but is incompatible with language=multi. With multi-language + stereo,
+        # Deepgram still receives both channels' audio for transcription.
+        if self._channels == 2 and not is_multi:
             params["multichannel"] = "true"
-            params["channels"] = str(self._channels)
         else:
             params["multichannel"] = "false"
-            params["channels"] = str(self._channels)
 
         query_string = "&".join(f"{k}={v}" for k, v in params.items())
 

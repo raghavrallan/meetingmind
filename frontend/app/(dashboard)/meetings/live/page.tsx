@@ -111,13 +111,13 @@ export default function LiveMeetingPage() {
     meetingId: currentMeetingId,
     role: "recorder",
     language: selectedLanguage,
-    channels: 1,
+    channels: channelCount,
     keyterms,
     userName,
     enabled: isRecording,
   });
 
-  const { startCapture, stopCapture, isCapturing, hasSystemAudio: captureHasSystem, muteMic } =
+  const { startCapture, stopCapture, isCapturing, hasSystemAudio: captureHasSystem, channelCount, muteMic } =
     useAudioCapture({
       onAudioChunk: sendAudio,
       onLevels: (levels) => updateAudioLevel(levels),
