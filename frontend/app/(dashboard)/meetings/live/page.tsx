@@ -11,7 +11,6 @@ import {
   Clock,
   Wifi,
   WifiOff,
-  Monitor,
   Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -111,13 +110,13 @@ export default function LiveMeetingPage() {
     meetingId: currentMeetingId,
     role: "recorder",
     language: selectedLanguage,
-    channels: channelCount,
+    channels: 1,
     keyterms,
     userName,
     enabled: isRecording,
   });
 
-  const { startCapture, stopCapture, isCapturing, hasSystemAudio: captureHasSystem, channelCount, muteMic } =
+  const { startCapture, stopCapture, isCapturing, muteMic } =
     useAudioCapture({
       onAudioChunk: sendAudio,
       onLevels: (levels) => updateAudioLevel(levels),
@@ -136,11 +135,6 @@ export default function LiveMeetingPage() {
     }, 1000);
     return () => clearInterval(interval);
   }, [isRecording, incrementDuration]);
-
-  // Sync system audio state from capture hook
-  useEffect(() => {
-    setHasSystemAudio(captureHasSystem);
-  }, [captureHasSystem, setHasSystemAudio]);
 
   const handleStart = useCallback(async () => {
     if (!isAuthenticated || isStarting) return;
@@ -254,13 +248,6 @@ export default function LiveMeetingPage() {
                 </Badge>
               )}
 
-              {/* System audio indicator */}
-              {hasSystemAudio && (
-                <Badge variant="outline" className="gap-1 border-blue-500/30 text-blue-500">
-                  <Monitor className="h-3 w-3" />
-                  System Audio
-                </Badge>
-              )}
 
               {/* Pulsing red dot */}
               <div className="flex items-center gap-2">
