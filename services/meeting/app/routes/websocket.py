@@ -232,37 +232,71 @@ async def meeting_websocket(websocket: WebSocket, meeting_id: UUID):
     user_payload = await _authenticate_websocket(websocket)
     user_id = UUID(user_payload["sub"])
 
-    # Wait for role assignment (may also include language preference and channel count)
+    # Wait for role assignment (may also include language, channels, keyterms)
     language = "multi"
     channels = 1
+    client_keyterms: list[str] = []
+    user_name = ""
     try:
         role_msg = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
         role_data = json.loads(role_msg)
         role = role_data.get("role", "viewer")
         language = role_data.get("language", "multi")
         channels = int(role_data.get("channels", 1))
+        client_keyterms = role_data.get("keyterms", [])
+        user_name = role_data.get("userName", "")
     except (asyncio.TimeoutError, json.JSONDecodeError):
         role = "viewer"
 
-    # If no language from client, read from the meeting record
-    if language == "multi" or not language:
-        async with async_session() as db:
-            result = await db.execute(
-                select(Meeting.language).where(Meeting.id == meeting_id)
-            )
-            meeting_lang = result.scalar_one_or_none()
-            if meeting_lang and meeting_lang != "en":
-                language = meeting_lang
+    # Auto-collect keyterms from meeting/project/user data
+    keyterms: list[str] = list(client_keyterms)
+    async with async_session() as db:
+        # Meeting language fallback
+        result = await db.execute(
+            select(Meeting.language, Meeting.project_id, Meeting.title).where(Meeting.id == meeting_id)
+        )
+        meeting_row = result.one_or_none()
+        if meeting_row:
+            if (language == "multi" or not language) and meeting_row.language and meeting_row.language != "en":
+                language = meeting_row.language
+            if meeting_row.title:
+                keyterms.append(meeting_row.title)
 
-    logger.info(f"WebSocket connected: meeting={meeting_id}, user={user_id}, role={role}, language={language}, channels={channels}")
+            # Project name as keyterm
+            if meeting_row.project_id:
+                from shared.models.project import Project
+                proj = await db.execute(select(Project.name).where(Project.id == meeting_row.project_id))
+                proj_name = proj.scalar_one_or_none()
+                if proj_name:
+                    keyterms.append(proj_name)
+
+        # Creator's name as keyterm
+        from shared.models.user import User
+        user_result = await db.execute(select(User.name).where(User.id == user_id))
+        creator_name = user_result.scalar_one_or_none()
+        if creator_name:
+            keyterms.append(creator_name)
+            if not user_name:
+                user_name = creator_name
+
+    # Deduplicate keyterms
+    seen = set()
+    unique_keyterms = []
+    for t in keyterms:
+        t_lower = t.strip().lower()
+        if t_lower and t_lower not in seen:
+            seen.add(t_lower)
+            unique_keyterms.append(t.strip())
+
+    logger.info(f"WebSocket connected: meeting={meeting_id}, user={user_id}, role={role}, language={language}, channels={channels}, keyterms={len(unique_keyterms)}")
 
     if role == "recorder":
-        await _handle_recorder(websocket, meeting_id, user_id, language, channels)
+        await _handle_recorder(websocket, meeting_id, user_id, language, channels, unique_keyterms)
     else:
         await _handle_viewer(websocket, meeting_id, user_id)
 
 
-async def _handle_recorder(websocket: WebSocket, meeting_id: UUID, user_id: UUID, language: str = "multi", channels: int = 1) -> None:
+async def _handle_recorder(websocket: WebSocket, meeting_id: UUID, user_id: UUID, language: str = "multi", channels: int = 1, keyterms: list[str] | None = None) -> None:
     """Handle the recording client's WebSocket connection.
 
     Receives audio chunks, forwards to Deepgram, and relays transcription
@@ -324,7 +358,7 @@ async def _handle_recorder(websocket: WebSocket, meeting_id: UUID, user_id: UUID
                 _persist_utterance(meeting_id, data),
             )
 
-    deepgram_client = DeepgramStreamClient(on_transcript=on_transcript, api_key=deepgram_key, language=language, channels=channels)
+    deepgram_client = DeepgramStreamClient(on_transcript=on_transcript, api_key=deepgram_key, language=language, channels=channels, keyterms=keyterms or [])
 
     try:
         async with deepgram_client:

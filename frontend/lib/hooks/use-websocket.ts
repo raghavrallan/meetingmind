@@ -9,6 +9,8 @@ interface UseWebSocketOptions {
   role: "recorder" | "viewer";
   language?: string;
   channels?: number;
+  keyterms?: string[];
+  userName?: string;
   enabled?: boolean;
 }
 
@@ -21,7 +23,7 @@ interface UseWebSocketReturn {
 }
 
 export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
-  const { meetingId, role, language = "multi", channels = 1, enabled = true } = options;
+  const { meetingId, role, language = "multi", channels = 1, keyterms = [], userName = "", enabled = true } = options;
   const wsRef = useRef<WebSocket | null>(null);
   const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const connectionStatus = useMeetingStore((s) => s.connectionStatus);
@@ -39,7 +41,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     ws.binaryType = "arraybuffer";
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ role, language, channels }));
+      ws.send(JSON.stringify({ role, language, channels, keyterms, userName }));
     };
 
     ws.onmessage = (event) => {
@@ -140,14 +142,34 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
  *   channel_index, channel.alternatives[0].transcript,
  *   is_final, start, duration, words[].speaker
  */
+// Speaker name cache: speaker index -> display name
+const _speakerNames = new Map<number, string>();
+let _primaryUserName = "";
+
+export function setRecorderUserName(name: string) {
+  _primaryUserName = name;
+}
+
+function getSpeakerName(speakerIndex: number): string {
+  if (_speakerNames.has(speakerIndex)) return _speakerNames.get(speakerIndex)!;
+
+  let name: string;
+  if (speakerIndex === 0 && _primaryUserName) {
+    name = _primaryUserName;
+  } else {
+    name = `Speaker ${speakerIndex + 1}`;
+  }
+
+  _speakerNames.set(speakerIndex, name);
+  return name;
+}
+
 function handleTranscription(data: Record<string, unknown>) {
   const store = useMeetingStore.getState();
 
-  // Deepgram streaming responses have a `channel` field
   const channel = data.channel as
     | { alternatives?: { transcript?: string; words?: { speaker?: number; word?: string }[] }[] }
     | undefined;
-  const channelIndex = (data.channel_index as number[] | undefined)?.[0] ?? 0;
   const isFinal = Boolean(data.is_final);
   const start = (data.start as number) ?? 0;
 
@@ -157,13 +179,11 @@ function handleTranscription(data: Record<string, unknown>) {
   const transcript = alt.transcript?.trim();
   if (!transcript) return;
 
-  // Determine speaker from first word's speaker field, or fall back to channel
-  const speakerIndex = alt.words?.[0]?.speaker ?? channelIndex;
-  const speakerLabel = channelIndex === 0 ? "Mic" : "System";
-  const speaker = `Speaker ${speakerIndex + 1} (${speakerLabel})`;
+  // Use diarization speaker from final results; for interim, use last known speaker or 0
+  const speakerIndex = alt.words?.[0]?.speaker ?? 0;
+  const speaker = getSpeakerName(speakerIndex);
 
-  // Stable line ID from channel + start time for interim→final upserts
-  const lineId = `ch${channelIndex}-${start.toFixed(2)}`;
+  const lineId = `s${speakerIndex}-${start.toFixed(2)}`;
 
   const line: TranscriptLine = {
     id: lineId,
@@ -174,10 +194,9 @@ function handleTranscription(data: Record<string, unknown>) {
     isFinal,
   };
 
-  // Check if this line already exists (interim update)
   const existing = store.transcriptLines.find((l) => l.id === lineId);
   if (existing) {
-    store.updateTranscriptLine(lineId, { text: transcript, isFinal });
+    store.updateTranscriptLine(lineId, { text: transcript, isFinal, speaker });
   } else {
     store.addTranscriptLine(line);
   }

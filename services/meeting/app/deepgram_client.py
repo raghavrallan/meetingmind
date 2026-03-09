@@ -31,11 +31,13 @@ class DeepgramStreamClient:
         language: str = "multi",
         api_key: Optional[str] = None,
         channels: int = 1,
+        keyterms: Optional[list[str]] = None,
     ):
         self._on_transcript = on_transcript
         self._language = language if language in SUPPORTED_LANGUAGES else "multi"
         self._api_key = api_key or settings.deepgram_api_key
         self._channels = max(1, min(channels, 2))
+        self._keyterms = keyterms or []
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
         self._receive_task: Optional[asyncio.Task] = None
         self._connected = False
@@ -50,6 +52,7 @@ class DeepgramStreamClient:
         When language=multi, multichannel must be disabled (Deepgram constraint).
         When channels=1 (mic only), use mono mode.
         Speaker separation is handled by diarize.
+        Keyterms boost name/vocabulary recognition accuracy by up to 90%.
         """
         is_multi = self._language == "multi"
         use_multichannel = self._channels == 2 and not is_multi
@@ -62,6 +65,8 @@ class DeepgramStreamClient:
             "interim_results": "true",
             "smart_format": "true",
             "filler_words": "false",
+            "endpointing": "500",
+            "utterance_end_ms": "1000",
             "encoding": "linear16",
             "sample_rate": "16000",
             "language": self._language,
@@ -75,6 +80,13 @@ class DeepgramStreamClient:
             params["channels"] = str(self._channels)
 
         query_string = "&".join(f"{k}={v}" for k, v in params.items())
+
+        # Keyterm prompting: each term is a separate keyterm= param
+        for term in self._keyterms[:100]:
+            clean = term.strip()
+            if clean:
+                query_string += f"&keyterm={clean}"
+
         return f"{DEEPGRAM_WS_URL}?{query_string}"
 
     async def connect(self) -> None:

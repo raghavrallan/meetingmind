@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -43,7 +44,7 @@ const LANGUAGES = [
 import { cn, formatDuration, speakerColor } from "@/lib/utils";
 import { useMeetingStore } from "@/lib/stores/meeting";
 import { useAuth } from "@/lib/hooks/use-auth";
-import { useWebSocket } from "@/lib/hooks/use-websocket";
+import { useWebSocket, setRecorderUserName } from "@/lib/hooks/use-websocket";
 import { useAudioCapture } from "@/lib/hooks/use-audio-capture";
 import { api } from "@/lib/api";
 
@@ -98,16 +99,21 @@ export default function LiveMeetingPage() {
   const [isStopping, setIsStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState("multi");
+  const [keytermsInput, setKeytermsInput] = useState("");
   const meetingIdRef = useRef<string | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
 
   const currentMeetingId = useMeetingStore((s) => s.currentMeetingId);
+  const userName = user?.name || "";
+  const keyterms = keytermsInput.split(",").map((t) => t.trim()).filter(Boolean);
 
   const { sendAudio, sendStop, disconnect, isConnected } = useWebSocket({
     meetingId: currentMeetingId,
     role: "recorder",
     language: selectedLanguage,
     channels: 1,
+    keyterms,
+    userName,
     enabled: isRecording,
   });
 
@@ -169,6 +175,9 @@ export default function LiveMeetingPage() {
       await api.meetings.start(meeting.id);
 
       // 3. Start recording in Zustand (triggers WebSocket connect)
+      // Set user name for speaker labeling before WebSocket connects
+      setRecorderUserName(userName);
+
       // Audio capture starts automatically once WebSocket is connected (see effect above)
       startRecording(meeting.id);
       setAudioSource("browser");
@@ -313,6 +322,34 @@ export default function LiveMeetingPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Key names/terms input (before recording) */}
+      {!isRecording && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Key Names & Terms (optional)</p>
+              <p className="text-xs text-muted-foreground">
+                Add participant names, project terms, or jargon to improve transcription accuracy. Separate with commas.
+              </p>
+              <Input
+                placeholder="e.g. Raghav Rallan, MeetingMind, Sprint Review..."
+                value={keytermsInput}
+                onChange={(e) => setKeytermsInput(e.target.value)}
+              />
+              {keyterms.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {keyterms.map((term, i) => (
+                    <span key={i} className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+                      {term}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
