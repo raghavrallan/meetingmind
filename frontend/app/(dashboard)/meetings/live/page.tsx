@@ -142,27 +142,18 @@ export default function LiveMeetingPage() {
     setHasSystemAudio(captureHasSystem);
   }, [captureHasSystem, setHasSystemAudio]);
 
-  // Start audio capture once WebSocket is connected
-  const hasStartedCaptureRef = useRef(false);
-  useEffect(() => {
-    if (isConnected && isRecording && !hasStartedCaptureRef.current) {
-      hasStartedCaptureRef.current = true;
-      startCapture().catch((err) => {
-        setError(`Audio capture failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }
-    if (!isRecording) {
-      hasStartedCaptureRef.current = false;
-    }
-  }, [isConnected, isRecording, startCapture]);
-
   const handleStart = useCallback(async () => {
     if (!isAuthenticated || isStarting) return;
     setIsStarting(true);
     setError(null);
 
     try {
-      // 1. Create meeting with selected language
+      // 1. Start audio capture FIRST -- this prompts screen share dialog
+      //    and determines channel count BEFORE we connect the WebSocket
+      setRecorderUserName(userName);
+      await startCapture();
+
+      // 2. Create meeting on backend
       const now = new Date();
       const title = `Meeting ${now.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
       const meeting = await api.meetings.create({
@@ -171,23 +162,21 @@ export default function LiveMeetingPage() {
       });
       meetingIdRef.current = meeting.id;
 
-      // 2. Start meeting on backend (sets status RECORDING)
+      // 3. Start meeting on backend (sets status RECORDING)
       await api.meetings.start(meeting.id);
 
-      // 3. Start recording in Zustand (triggers WebSocket connect)
-      // Set user name for speaker labeling before WebSocket connects
-      setRecorderUserName(userName);
-
-      // Audio capture starts automatically once WebSocket is connected (see effect above)
+      // 4. Start recording in Zustand -- triggers WebSocket connect
+      //    channelCount is now correct (1=mono, 2=stereo with system audio)
       startRecording(meeting.id);
       setAudioSource("browser");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start recording");
+      stopCapture();
       reset();
     } finally {
       setIsStarting(false);
     }
-  }, [isAuthenticated, isStarting, selectedLanguage, startRecording, setAudioSource, reset]);
+  }, [isAuthenticated, isStarting, selectedLanguage, userName, startRecording, setAudioSource, startCapture, stopCapture, reset]);
 
   const handleStop = useCallback(async () => {
     if (isStopping) return;
