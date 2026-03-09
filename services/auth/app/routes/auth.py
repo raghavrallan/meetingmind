@@ -289,7 +289,10 @@ async def login_email(
     if not user or not user.password_hash:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    if not _verify_password(body.password, user.password_hash):
+    try:
+        if not _verify_password(body.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+    except ValueError:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if user.status == "deleted":

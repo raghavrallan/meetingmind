@@ -17,9 +17,24 @@ class ApiError extends Error {
   }
 }
 
+let _refreshing: Promise<boolean> | null = null;
+
+async function _tryRefreshToken(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function request<T>(
   endpoint: string,
-  options: RequestOptions = {}
+  options: RequestOptions = {},
+  _isRetry = false,
 ): Promise<T> {
   const { method = "GET", body, headers = {} } = options;
 
@@ -38,8 +53,33 @@ async function request<T>(
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
 
+  // Auto-refresh on 401 (expired access token) -- retry once
+  if (response.status === 401 && !_isRetry && !endpoint.includes("/auth/")) {
+    // Deduplicate concurrent refresh calls
+    if (!_refreshing) {
+      _refreshing = _tryRefreshToken();
+    }
+    const refreshed = await _refreshing;
+    _refreshing = null;
+
+    if (refreshed) {
+      return request<T>(endpoint, options, true);
+    }
+    // Refresh failed -- redirect to login
+    window.location.href = "/login";
+    throw new ApiError(401, "Session expired");
+  }
+
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
+
+    // 403 = suspended -- redirect to login with message
+    if (response.status === 403 && errorData?.detail?.includes("suspended")) {
+      await fetch(`${API_BASE_URL}/api/v1/auth/logout`, { method: "POST", credentials: "include" }).catch(() => {});
+      window.location.href = `/login?error=${encodeURIComponent(errorData.detail)}`;
+      throw new ApiError(403, errorData.detail);
+    }
+
     throw new ApiError(
       response.status,
       errorData?.detail || `Request failed with status ${response.status}`,
