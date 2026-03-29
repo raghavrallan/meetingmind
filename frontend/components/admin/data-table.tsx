@@ -85,7 +85,7 @@ export function DataTable<T extends Record<string, unknown>>({
       </div>
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-between px-2 py-4">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-2 py-4">
           <p className="text-sm text-muted-foreground">
             Showing {(page - 1) * perPage + 1}–
             {Math.min(page * perPage, total)} of {total}

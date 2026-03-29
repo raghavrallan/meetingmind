@@ -11,12 +11,12 @@ import {
   Clock,
   Wifi,
   WifiOff,
-  Monitor,
   Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -43,7 +43,7 @@ const LANGUAGES = [
 import { cn, formatDuration, speakerColor } from "@/lib/utils";
 import { useMeetingStore } from "@/lib/stores/meeting";
 import { useAuth } from "@/lib/hooks/use-auth";
-import { useWebSocket } from "@/lib/hooks/use-websocket";
+import { useWebSocket, setRecorderUserName } from "@/lib/hooks/use-websocket";
 import { useAudioCapture } from "@/lib/hooks/use-audio-capture";
 import { api } from "@/lib/api";
 
@@ -98,20 +98,25 @@ export default function LiveMeetingPage() {
   const [isStopping, setIsStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState("multi");
+  const [keytermsInput, setKeytermsInput] = useState("");
   const meetingIdRef = useRef<string | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
 
   const currentMeetingId = useMeetingStore((s) => s.currentMeetingId);
+  const userName = user?.name || "";
+  const keyterms = keytermsInput.split(",").map((t) => t.trim()).filter(Boolean);
 
   const { sendAudio, sendStop, disconnect, isConnected } = useWebSocket({
     meetingId: currentMeetingId,
     role: "recorder",
     language: selectedLanguage,
     channels: 1,
+    keyterms,
+    userName,
     enabled: isRecording,
   });
 
-  const { startCapture, stopCapture, isCapturing, hasSystemAudio: captureHasSystem, muteMic } =
+  const { startCapture, stopCapture, isCapturing, muteMic } =
     useAudioCapture({
       onAudioChunk: sendAudio,
       onLevels: (levels) => updateAudioLevel(levels),
@@ -131,32 +136,18 @@ export default function LiveMeetingPage() {
     return () => clearInterval(interval);
   }, [isRecording, incrementDuration]);
 
-  // Sync system audio state from capture hook
-  useEffect(() => {
-    setHasSystemAudio(captureHasSystem);
-  }, [captureHasSystem, setHasSystemAudio]);
-
-  // Start audio capture once WebSocket is connected
-  const hasStartedCaptureRef = useRef(false);
-  useEffect(() => {
-    if (isConnected && isRecording && !hasStartedCaptureRef.current) {
-      hasStartedCaptureRef.current = true;
-      startCapture().catch((err) => {
-        setError(`Audio capture failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }
-    if (!isRecording) {
-      hasStartedCaptureRef.current = false;
-    }
-  }, [isConnected, isRecording, startCapture]);
-
   const handleStart = useCallback(async () => {
     if (!isAuthenticated || isStarting) return;
     setIsStarting(true);
     setError(null);
 
     try {
-      // 1. Create meeting with selected language
+      // 1. Start audio capture FIRST -- this prompts screen share dialog
+      //    and determines channel count BEFORE we connect the WebSocket
+      setRecorderUserName(userName);
+      await startCapture();
+
+      // 2. Create meeting on backend
       const now = new Date();
       const title = `Meeting ${now.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
       const meeting = await api.meetings.create({
@@ -165,20 +156,21 @@ export default function LiveMeetingPage() {
       });
       meetingIdRef.current = meeting.id;
 
-      // 2. Start meeting on backend (sets status RECORDING)
+      // 3. Start meeting on backend (sets status RECORDING)
       await api.meetings.start(meeting.id);
 
-      // 3. Start recording in Zustand (triggers WebSocket connect)
-      // Audio capture starts automatically once WebSocket is connected (see effect above)
+      // 4. Start recording in Zustand -- triggers WebSocket connect
+      //    channelCount is now correct (1=mono, 2=stereo with system audio)
       startRecording(meeting.id);
       setAudioSource("browser");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start recording");
+      stopCapture();
       reset();
     } finally {
       setIsStarting(false);
     }
-  }, [isAuthenticated, isStarting, selectedLanguage, startRecording, setAudioSource, reset]);
+  }, [isAuthenticated, isStarting, selectedLanguage, userName, startRecording, setAudioSource, startCapture, stopCapture, reset]);
 
   const handleStop = useCallback(async () => {
     if (isStopping) return;
@@ -235,7 +227,7 @@ export default function LiveMeetingPage() {
             Real-time transcription and recording
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {isRecording && (
             <>
               {/* Connection status badge */}
@@ -256,13 +248,6 @@ export default function LiveMeetingPage() {
                 </Badge>
               )}
 
-              {/* System audio indicator */}
-              {hasSystemAudio && (
-                <Badge variant="outline" className="gap-1 border-blue-500/30 text-blue-500">
-                  <Monitor className="h-3 w-3" />
-                  System Audio
-                </Badge>
-              )}
 
               {/* Pulsing red dot */}
               <div className="flex items-center gap-2">
@@ -299,7 +284,7 @@ export default function LiveMeetingPage() {
                 </p>
               </div>
               <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
-                <SelectTrigger className="w-[220px]">
+                <SelectTrigger className="w-full sm:w-[220px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -313,6 +298,34 @@ export default function LiveMeetingPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Key names/terms input (before recording) */}
+      {!isRecording && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Key Names & Terms (optional)</p>
+              <p className="text-xs text-muted-foreground">
+                Add participant names, project terms, or jargon to improve transcription accuracy. Separate with commas.
+              </p>
+              <Input
+                placeholder="e.g. Raghav Rallan, MeetingMind, Sprint Review..."
+                value={keytermsInput}
+                onChange={(e) => setKeytermsInput(e.target.value)}
+              />
+              {keyterms.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {keyterms.map((term, i) => (
+                    <span key={i} className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+                      {term}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

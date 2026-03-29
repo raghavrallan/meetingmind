@@ -40,6 +40,16 @@ export function useAuth() {
         return;
       }
 
+      // Suspended user -- force logout with message
+      if (res.status === 403) {
+        const data = await res.json().catch(() => null);
+        await fetch(`${API_BASE}/api/v1/auth/logout`, { method: "POST", credentials: "include" }).catch(() => {});
+        setState({ user: null, loading: false, error: null });
+        const msg = encodeURIComponent(data?.detail || "Account suspended");
+        window.location.href = `/login?error=${msg}`;
+        return;
+      }
+
       if (res.status === 401) {
         const refreshRes = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
           method: "POST",
@@ -49,6 +59,15 @@ export function useAuth() {
         if (refreshRes.ok) {
           const data = await refreshRes.json();
           setState({ user: data.user, loading: false, error: null });
+          return;
+        }
+
+        // Refresh also returned 403 (suspended)
+        if (refreshRes.status === 403) {
+          const data = await refreshRes.json().catch(() => null);
+          setState({ user: null, loading: false, error: null });
+          const msg = encodeURIComponent(data?.detail || "Account suspended");
+          window.location.href = `/login?error=${msg}`;
           return;
         }
       }

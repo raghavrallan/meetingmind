@@ -193,7 +193,7 @@ export default function AdminCreditsPage() {
                 placeholder="User ID"
                 value={grantUserId}
                 onChange={(e) => setGrantUserId(e.target.value)}
-                className="w-64"
+                className="w-full sm:w-64"
               />
             </div>
             <div className="space-y-1">
@@ -203,7 +203,7 @@ export default function AdminCreditsPage() {
                 placeholder="Amount"
                 value={grantAmount}
                 onChange={(e) => setGrantAmount(e.target.value)}
-                className="w-32"
+                className="w-full sm:w-32"
               />
             </div>
             <div className="space-y-1">
@@ -214,7 +214,7 @@ export default function AdminCreditsPage() {
                 placeholder="Description (optional)"
                 value={grantDescription}
                 onChange={(e) => setGrantDescription(e.target.value)}
-                className="w-64"
+                className="w-full sm:w-64"
               />
             </div>
             <Button

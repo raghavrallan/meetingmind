@@ -450,7 +450,7 @@ export default function SettingsPage() {
 
           <div className="mt-6 space-y-3">
             <p className="text-sm font-medium">Connection Status</p>
-            <div className="flex items-center justify-between rounded-lg border border-[hsl(var(--border))] p-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg border border-[hsl(var(--border))] p-4">
               <div className="flex items-center gap-3">
                 <svg className="h-8 w-8" viewBox="0 0 24 24">
                   <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
@@ -490,7 +490,7 @@ export default function SettingsPage() {
               )}
             </div>
 
-            <div className="flex items-center justify-between rounded-lg border border-[hsl(var(--border))] p-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg border border-[hsl(var(--border))] p-4">
               <div className="flex items-center gap-3">
                 <svg className="h-8 w-8" viewBox="0 0 24 24">
                   <path d="M11.4 24H0V12.6h11.4V24z" fill="#F1511B" />
@@ -596,7 +596,7 @@ export default function SettingsPage() {
       </Card>
 
       {/* Save Button */}
-      <div className="flex items-center justify-between pb-8">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pb-8">
         <p className="text-xs text-muted-foreground">
           <Shield className="inline h-3 w-3 mr-1" />
           All sensitive data is encrypted at rest with AES-256
