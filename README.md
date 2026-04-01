@@ -273,3 +273,5 @@ See [`.env.example`](.env.example) for the full list. The critical ones:
 ## License
 
 MIT
+
+<!-- activity: init -->
